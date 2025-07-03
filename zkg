@@ -1945,6 +1945,7 @@ def cmd_info(manager, args, config, configfile):
             name,
             version=args.version,
             prefer_installed=(not args.nolocal),
+            update_submodules=False,
         )
 
         if info.package:
@@ -2017,6 +2018,7 @@ def cmd_info(manager, args, config, configfile):
                         name,
                         vers,
                         prefer_installed=(not args.nolocal),
+                        update_submodules=False,
                     )
                     pkginfo[name]["metadata"][info2.metadata_version] = {}
                     if info2.metadata_file:
