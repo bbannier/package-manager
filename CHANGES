@@ -1,3 +1,7 @@
+3.0.1-48 | 2025-07-14 09:07:57 -0700
+
+  * Make 'zkg info' avoid updating the submodules when checking out versions (Tim Wojtulewicz, Corelight)
+
 3.0.1-46 | 2025-04-28 11:44:05 +0200
 
   * Bump pre-commit hooks (Benjamin Bannier, Corelight)

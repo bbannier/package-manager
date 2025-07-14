@@ -123,14 +123,14 @@ def find_sentence_end(s):
         beg = period_idx + 1
 
 
-def git_clone(git_url, dst_path, shallow=False):
+def git_clone(git_url, dst_path, shallow=False, recursive=True):
     if shallow:
         try:
             git.Git().clone(
                 git_url,
                 dst_path,
                 "--no-single-branch",
-                recursive=True,
+                recursive=recursive,
                 depth=1,
             )
         except git.GitCommandError:
@@ -148,7 +148,7 @@ def git_clone(git_url, dst_path, shallow=False):
             rval.git.reset("--hard")
             rval.git.clean("-ffdx")
     else:
-        git.Git().clone(git_url, dst_path, recursive=True)
+        git.Git().clone(git_url, dst_path, recursive=recursive)
 
     rval = git.Repo(dst_path)
 
@@ -163,7 +163,7 @@ def git_clone(git_url, dst_path, shallow=False):
     return rval
 
 
-def git_checkout(clone, version):
+def git_checkout(clone, version, update_submodules=True):
     """Checkout a version of a git repo along with any associated submodules.
 
     Args:
@@ -171,12 +171,16 @@ def git_checkout(clone, version):
 
         version (str): the branch, tag, or commit to checkout
 
+        update_submodules (bool): if this is set, git will sync and update
+            the submodules when checking out the version.
+
     Raises:
         git.GitCommandError: if the git repo is invalid
     """
     clone.git.checkout(version)
-    clone.git.submodule("sync", "--recursive")
-    clone.git.submodule("update", "--recursive", "--init")
+    if update_submodules:
+        clone.git.submodule("sync", "--recursive")
+        clone.git.submodule("update", "--recursive", "--init")
 
 
 def git_default_branch(repo):

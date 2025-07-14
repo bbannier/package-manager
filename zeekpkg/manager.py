@@ -1804,7 +1804,7 @@ class Manager:
 
         return ("", infos)
 
-    def info(self, pkg_path, version="", prefer_installed=True):
+    def info(self, pkg_path, version="", prefer_installed=True, update_submodules=True):
         """Retrieves information about a package.
 
         Args:
@@ -1824,6 +1824,9 @@ class Manager:
                 retrieving the latest information from the package's git repo.
                 The `version` parameter is also ignored when this is set as
                 it uses whatever version of the package is currently installed.
+
+            update_submodules (bool): if this is set, git checkout will update
+                the submodules for the repository.
 
         Returns:
             A :class:`.package.PackageInfo` object.
@@ -1859,7 +1862,7 @@ class Manager:
             package = Package(git_url=pkg_path)
 
             try:
-                return self._info(package, status, version)
+                return self._info(package, status, version, update_submodules)
             except git.GitCommandError as error:
                 LOG.info(
                     'getting info on "%s": invalid git repo path: %s',
@@ -1892,13 +1895,13 @@ class Manager:
         package = matches[0]
 
         try:
-            return self._info(package, status, version)
+            return self._info(package, status, version, update_submodules)
         except git.GitCommandError as error:
             LOG.info('getting info on "%s": invalid git repo path: %s', pkg_path, error)
             reason = "git repository is either invalid or unreachable"
             return PackageInfo(package=package, invalid_reason=reason, status=status)
 
-    def _info(self, package, status, version):
+    def _info(self, package, status, version, update_submodules):
         """Retrieves information about a package.
 
         Returns:
@@ -1908,7 +1911,7 @@ class Manager:
             git.GitCommandError: when failing to clone the package repo
         """
         clonepath = os.path.join(self.scratch_dir, package.name)
-        clone = _clone_package(package, clonepath, version)
+        clone = _clone_package(package, clonepath, version, update_submodules)
         versions = git_version_tags(clone)
 
         if not version:
@@ -1918,7 +1921,7 @@ class Manager:
                 version = git_default_branch(clone)
 
         try:
-            git_checkout(clone, version)
+            git_checkout(clone, version, update_submodules)
         except git.GitCommandError:
             reason = f'no such commit, branch, or version tag: "{version}"'
             return PackageInfo(package=package, status=status, invalid_reason=reason)
@@ -3295,7 +3298,7 @@ def _create_readme(file_path):
         f.write("Don't make direct modifications to anything within it.\n")
 
 
-def _clone_package(package, clonepath, version):
+def _clone_package(package, clonepath, version, recursive=True):
     """Clone a :class:`.package.Package` git repo.
 
     Returns:
@@ -3306,7 +3309,7 @@ def _clone_package(package, clonepath, version):
     """
     delete_path(clonepath)
     shallow = not is_sha1(version)
-    return git_clone(package.git_url, clonepath, shallow=shallow)
+    return git_clone(package.git_url, clonepath, shallow=shallow, recursive=recursive)
 
 
 def _get_package_metadata(parser):
