@@ -1,3 +1,7 @@
+3.1.0 | 2025-07-14 09:08:08 -0700
+
+  * Release 3.1.0.
+
 3.0.1-48 | 2025-07-14 09:07:57 -0700
 
   * Make 'zkg info' avoid updating the submodules when checking out versions (Tim Wojtulewicz, Corelight)
