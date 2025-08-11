@@ -9,7 +9,7 @@ dynamic = ["version"]
 description = "The Zeek Package Manager"
 readme = "README"
 
-requires-python = ">= 3.9"
+requires-python = ">= 3.10"
 
 keywords = [
     "zeek",

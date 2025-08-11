@@ -423,6 +423,7 @@ class Manager:
         for path_enabled, path_disabled in zip(
             magic_paths_enabled,
             magic_paths_disabled,
+            strict=False,
         ):
             if ipkg.status.is_loaded:
                 if path_disabled.exists():

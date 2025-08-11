@@ -6,7 +6,6 @@ the properties and status of Zeek packages.
 import os
 import re
 from functools import total_ordering
-from typing import Optional
 
 import semantic_version as semver
 
@@ -592,7 +591,7 @@ def make_builtin_package(
     *,
     name: str,
     current_version: str,
-    current_hash: Optional[str] = None,
+    current_hash: str | None = None,
 ):
     """
     Given ``name``, ``version`` and ``commit`` as found in Zeek's ``zkg.provides``
