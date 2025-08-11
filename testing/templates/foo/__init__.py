@@ -5,30 +5,30 @@ TEMPLATE_API_VERSION = "1.0.0"
 
 
 class Package(zeekpkg.template.Package):
-    def contentdir(self):
+    def contentdir(self) -> str:
         return "package"
 
-    def needed_user_vars(self):
+    def needed_user_vars(self) -> list[str]:
         return ["name"]
 
-    def validate(self, tmpl):
+    def validate(self, tmpl: zeekpkg.template.Template) -> None:
         if not tmpl.lookup_param("name"):
             raise zeekpkg.template.InputError("package requires a name")
 
 
 class Readme(zeekpkg.template.Feature):
-    def contentdir(self):
+    def contentdir(self) -> str:
         return "readme"
 
-    def needed_user_vars(self):
+    def needed_user_vars(self) -> list[str]:
         return ["readme"]
 
-    def validate(self, tmpl):
+    def validate(self, tmpl: zeekpkg.template.Template) -> None:
         pass
 
 
 class Template(zeekpkg.template.Template):
-    def define_user_vars(self):
+    def define_user_vars(self) -> list[zeekpkg.uservar.UserVar]:
         return [
             zeekpkg.uservar.UserVar(
                 "name",
@@ -41,19 +41,22 @@ class Template(zeekpkg.template.Template):
             ),
         ]
 
-    def apply_user_vars(self, uvars):
-        for uvar in uvars:
-            if uvar.name() == "name":
-                self.define_param("name", uvar.val())
-                self.define_param("module", uvar.val().upper())
-            if uvar.name() == "readme":
-                self.define_param("readme", uvar.val())
+    def apply_user_vars(self, user_vars: list[zeekpkg.uservar.UserVar]) -> None:
+        for uvar in user_vars:
+            val = uvar.val()
+            assert val
 
-    def package(self):
+            if uvar.name() == "name":
+                self.define_param("name", val)
+                self.define_param("module", val.upper())
+            if uvar.name() == "readme":
+                self.define_param("readme", val)
+
+    def package(self) -> Package:
         return Package()
 
-    def features(self):
+    def features(self) -> list[zeekpkg.template.Feature]:
         return [Readme()]
 
-    def validate(self, tmpl):
+    def validate(self, tmpl: zeekpkg.template.Template) -> None:
         pass

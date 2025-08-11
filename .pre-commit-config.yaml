@@ -16,3 +16,16 @@ repos:
     - id: ruff
       args: [--fix]
     - id: ruff-format
+
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v1.17.1
+  hooks:
+  - id: mypy
+    args: [--strict]
+    additional_dependencies:
+      - "argcomplete>=3.6.2"
+      - "GitPython>=3.1.43"
+      - "semantic_version>=2.10.0"
+      - "types-docutils>=0.21.0.20250809"
+      - "types-setuptools>=80.9.0.20250809"
+    exclude: "doc/.*"

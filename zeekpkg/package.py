@@ -30,12 +30,12 @@ LEGACY_PLUGIN_MAGIC_FILE = "__bro_plugin__"
 LEGACY_PLUGIN_MAGIC_FILE_DISABLED = "__bro_plugin__.disabled"
 
 
-def name_from_path(path):
+def name_from_path(path: str) -> str:
     """Returns the name of a package given a path to its git repository."""
     return canonical_url(path).split("/")[-1]
 
 
-def canonical_url(path):
+def canonical_url(path: str) -> str:
     """Returns the url of a package given a path to its git repo."""
     url = path.rstrip("/")
 
@@ -45,7 +45,7 @@ def canonical_url(path):
     return url
 
 
-def is_valid_name(name):
+def is_valid_name(name: str) -> bool:
     """Returns True if name is a valid package name, else False."""
     if name != name.strip():
         # Reject names with leading/trailing whitespace
@@ -65,7 +65,7 @@ def is_valid_name(name):
     return True
 
 
-def aliases(metadata_dict):
+def aliases(metadata_dict: dict[str, str]) -> list[str]:
     """Return a list of package aliases found in metadata's 'aliases' field."""
     if "aliases" not in metadata_dict:
         return []
@@ -73,7 +73,7 @@ def aliases(metadata_dict):
     return re.split(r",\s*|\s+", metadata_dict["aliases"])
 
 
-def tags(metadata_dict):
+def tags(metadata_dict: dict[str, str]) -> list[str]:
     """Return a list of tag strings found in the metadata's 'tags' field."""
     if "tags" not in metadata_dict:
         return []
@@ -81,7 +81,7 @@ def tags(metadata_dict):
     return re.split(r",\s*", metadata_dict["tags"])
 
 
-def short_description(metadata_dict):
+def short_description(metadata_dict: dict[str, str]) -> str:
     """Returns the first sentence of the metadata's 'desciption' field."""
     if "description" not in metadata_dict:
         return ""
@@ -104,7 +104,9 @@ def short_description(metadata_dict):
     return rval.lstrip()
 
 
-def user_vars(metadata_dict):
+def user_vars(
+    metadata_dict: dict[str, str],
+) -> list[tuple[str, str | None, str | None]] | None:
     """Returns a list of (str, str, str) from metadata's 'user_vars' field.
 
     Each entry in the returned list is a the name of a variable, its value,
@@ -121,7 +123,10 @@ def user_vars(metadata_dict):
     return [(uvar.name(), uvar.val(), uvar.desc()) for uvar in uvars]
 
 
-def dependencies(metadata_dict, field="depends"):
+def dependencies(
+    metadata_dict: dict[str, str],
+    field: str = "depends",
+) -> dict[str, str] | None:
     """Returns a dictionary of (str, str) based on metadata's dependency field.
 
     The keys indicate the name of a package (shorthand name or full git URL).
@@ -157,12 +162,12 @@ class PackageVersion:
     Helper class to compare package versions with version specs.
     """
 
-    def __init__(self, method, version):
+    def __init__(self, method: str | None, version: str | None) -> None:
         self.method = method
         self.version = version
         self.req_semver = None
 
-    def fullfills(self, version_spec):
+    def fullfills(self, version_spec: str) -> tuple[str, bool]:
         """
         Whether this package version fullfills the given version_spec.
 
@@ -177,13 +182,6 @@ class PackageVersion:
 
         if self.method == TRACKING_METHOD_BRANCH:
             return "tracking method branch and commit", False
-            if version_spec.startswith("branch="):
-                branch = version_spec[len("branch=") :]
-
-            if version_spec != self.version:
-                return f'branch "{self.version}" not matching "{branch}"', False
-
-            return "", True
 
         # TRACKING_METHOD_BRANCH / TRACKING_METHOD_BUILTIN
         if version_spec.startswith("branch="):
@@ -194,6 +192,7 @@ class PackageVersion:
             )
 
         if self.req_semver is None:
+            assert self.version
             normal_version = normalize_version_tag(self.version)
             self.req_semver = semver.Version.coerce(normal_version)
 
@@ -218,26 +217,30 @@ class InstalledPackage:
         status (:class:`PackageStatus`): the status of the installed package
     """
 
-    def __init__(self, package, status):
+    def __init__(self, package: "Package", status: "PackageStatus") -> None:
         self.package = package
         self.status = status
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"InstalledPackage(package={self.package!r}, status={self.status!r})"
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(str(self.package))
 
-    def __eq__(self, other):
-        return str(self.package) == str(other.package)
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, InstalledPackage) and str(self.package) == str(
+            other.package,
+        )
 
-    def __lt__(self, other):
-        return str(self.package) < str(other.package)
+    def __lt__(self, other: object) -> bool:
+        return isinstance(other, InstalledPackage) and (self.package) < str(
+            other.package,
+        )
 
-    def is_builtin(self):
+    def is_builtin(self) -> bool:
         return self.package.is_builtin()
 
-    def fullfills(self, version_spec):
+    def fullfills(self, version_spec: str) -> tuple[str, bool]:
         """
         Does the current version fullfill version_spec?
         """
@@ -275,13 +278,13 @@ class PackageStatus:
 
     def __init__(
         self,
-        is_loaded=False,
-        is_pinned=False,
-        is_outdated=False,
-        tracking_method=None,
-        current_version=None,
-        current_hash=None,
-    ):
+        is_loaded: bool = False,
+        is_pinned: bool = False,
+        is_outdated: bool = False,
+        tracking_method: str | None = None,
+        current_version: str | None = None,
+        current_hash: str | None = None,
+    ) -> None:
         self.is_loaded = is_loaded
         self.is_pinned = is_pinned
         self.is_outdated = is_outdated
@@ -289,7 +292,7 @@ class PackageStatus:
         self.current_version = current_version
         self.current_hash = current_hash
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         member_str = ", ".join(f"{k}={v!r}" for (k, v) in self.__dict__.items())
         return f"PackageStatus({member_str})"
 
@@ -328,16 +331,16 @@ class PackageInfo:
 
     def __init__(
         self,
-        package=None,
-        status=None,
-        metadata=None,
-        versions=None,
-        metadata_version="",
-        invalid_reason="",
-        version_type="",
-        metadata_file=None,
-        default_branch=None,
-    ):
+        package: "Package",
+        status: PackageStatus | None = None,
+        metadata: dict[str, str] | None = None,
+        versions: list[str] | None = None,
+        metadata_version: str | None = "",
+        invalid_reason: str = "",
+        version_type: str = "",
+        metadata_file: str | None = None,
+        default_branch: str | None = None,
+    ) -> None:
         self.package = package
         self.status = status
         self.metadata = {} if metadata is None else metadata
@@ -348,26 +351,26 @@ class PackageInfo:
         self.metadata_file = metadata_file
         self.default_branch = default_branch
 
-    def aliases(self):
+    def aliases(self) -> list[str]:
         """Return a list of package name aliases.
 
         The canonical one is listed first.
         """
         return aliases(self.metadata)
 
-    def tags(self):
+    def tags(self) -> list[str]:
         """Return a list of keyword tags associated with the package.
 
         This will be the contents of the package's `tags` field."""
         return tags(self.metadata)
 
-    def short_description(self):
+    def short_description(self) -> str:
         """Return a short description of the package.
 
         This will be the first sentence of the package's 'description' field."""
         return short_description(self.metadata)
 
-    def dependencies(self, field="depends"):
+    def dependencies(self, field: str = "depends") -> dict[str, str] | None:
         """Returns a dictionary of dependency -> version strings.
 
         The keys indicate the name of a package (shorthand name or full git
@@ -381,7 +384,7 @@ class PackageInfo:
         """
         return dependencies(self.metadata, field)
 
-    def user_vars(self):
+    def user_vars(self) -> list[UserVar] | None:
         """Returns a list of user variables parsed from metadata's 'user_vars' field.
 
         If the 'user_vars' field is not present, an empty list is returned.  If
@@ -392,7 +395,7 @@ class PackageInfo:
         """
         return UserVar.parse_dict(self.metadata)
 
-    def best_version(self):
+    def best_version(self) -> str:
         """Returns the best/latest version of the package that is available.
 
         If the package has any git release tags, this returns the highest one,
@@ -401,12 +404,16 @@ class PackageInfo:
         if self.versions:
             return self.versions[-1]
 
+        assert self.default_branch
         return self.default_branch
 
-    def is_builtin(self):
-        return self.package and self.package.is_builtin()
+    def is_builtin(self) -> bool:
+        if self.package:
+            return self.package.is_builtin()
 
-    def __repr__(self):
+        return False
+
+    def __repr__(self) -> str:
         return f"PackageInfo(package={self.package!r}, status={self.status!r})"
 
 
@@ -444,18 +451,21 @@ class Package:
 
     def __init__(
         self,
-        git_url,
-        source="",
-        directory="",
-        metadata=None,
-        name=None,
-        canonical=False,
-    ):
+        git_url: str,
+        source: str = "",
+        directory: str = "",
+        metadata: dict[str, str] | None = None,
+        name: str | None = None,
+        canonical: bool = False,
+    ) -> None:
         self.git_url = git_url
         self.source = source
         self.directory = directory
         self.metadata = {} if metadata is None else metadata
-        self.name = name
+        self.name: str
+
+        if name:
+            self.name = name
 
         if not canonical:
             self.git_url = canonical_url(git_url)
@@ -467,35 +477,35 @@ class Package:
 
             self.name = name_from_path(git_url)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.qualified_name()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"Package(git_url={self.git_url!r}, source={self.source!r},"
             f" directory={self.directory!r} name={self.name!r})"
         )
 
-    def is_builtin(self):
+    def is_builtin(self) -> bool:
         return self.git_url.startswith(BUILTIN_SCHEME)
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(str(self))
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         return str(self) == str(other)
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         return str(self) < str(other)
 
-    def aliases(self):
+    def aliases(self) -> list[str]:
         """Return a list of package name aliases.
 
         The canonical one is listed first.
         """
         return aliases(self.metadata)
 
-    def tags(self):
+    def tags(self) -> list[str]:
         """Return a list of keyword tags associated with the package.
 
         This will be the contents of the package's `tags` field and may
@@ -503,7 +513,7 @@ class Package:
         has not been installed yet."""
         return tags(self.metadata)
 
-    def short_description(self):
+    def short_description(self) -> str:
         """Return a short description of the package.
 
         This will be the first sentence of the package's 'description' field
@@ -511,7 +521,7 @@ class Package:
         package has not been installed yet."""
         return short_description(self.metadata)
 
-    def dependencies(self, field="depends"):
+    def dependencies(self, field: str = "depends") -> dict[str, str] | None:
         """Returns a dictionary of dependency -> version strings.
 
         The keys indicate the name of a package (shorthand name or full git
@@ -525,7 +535,7 @@ class Package:
         """
         return dependencies(self.metadata, field)
 
-    def user_vars(self):
+    def user_vars(self) -> list[tuple[str, str | None, str | None]] | None:
         """Returns a list of (str, str, str) from metadata's 'user_vars' field.
 
         Each entry in the returned list is a the name of a variable, it's value,
@@ -536,7 +546,7 @@ class Package:
         """
         return user_vars(self.metadata)
 
-    def name_with_source_directory(self):
+    def name_with_source_directory(self) -> str | None:
         """Return the package's name within its package source.
 
         E.g. for a package source with a package named "foo" in
@@ -549,7 +559,7 @@ class Package:
 
         return self.name
 
-    def qualified_name(self):
+    def qualified_name(self) -> str:
         """Return the shortest name that qualifies/distinguishes the package.
 
         If the package is part of a source, then this returns
@@ -561,7 +571,7 @@ class Package:
 
         return self.git_url
 
-    def matches_path(self, path):
+    def matches_path(self, path: str) -> bool:
         """Return whether this package has a matching path/name.
 
         E.g for a package with :meth:`qualified_name()` of "zeek/alice/foo",
@@ -592,7 +602,7 @@ def make_builtin_package(
     name: str,
     current_version: str,
     current_hash: str | None = None,
-):
+) -> PackageInfo:
     """
     Given ``name``, ``version`` and ``commit`` as found in Zeek's ``zkg.provides``
     entry, construct a :class:`PackageInfo` instance representing the built-in

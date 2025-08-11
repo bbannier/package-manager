@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 from collections import OrderedDict
+from typing import Any, TextIO
 
 try:
     import git
@@ -40,7 +41,7 @@ except ImportError as error:
 try:
     # Argcomplete provides command-line completion for users of argparse.
     # We support it if available, but don't complain when it isn't.
-    import argcomplete
+    import argcomplete  # noqa: F401
 except ImportError:
     pass
 
@@ -48,7 +49,8 @@ except ImportError:
 # installation. This ensures we find the matching zeekpkg module
 # first, avoiding potential conflicts with installations elsewhere on
 # the system.
-ZEEK_PYTHON_DIR = "@PY_MOD_INSTALL_DIR@"
+ZEEK_PYTHON_DIR: str | None = "@PY_MOD_INSTALL_DIR@"
+assert isinstance(ZEEK_PYTHON_DIR, str)
 if os.path.isdir(ZEEK_PYTHON_DIR):
     sys.path.insert(0, os.path.abspath(ZEEK_PYTHON_DIR))
 else:
@@ -57,7 +59,8 @@ else:
 # Similarly, make Zeek's binary installation path available by
 # default. This helps package installations succeed that require
 # e.g. zeek-config for their build process.
-ZEEK_BIN_DIR = "@ZEEK_BIN_DIR@"
+ZEEK_BIN_DIR: str | None = "@ZEEK_BIN_DIR@"
+assert isinstance(ZEEK_BIN_DIR, str)
 if os.path.isdir(ZEEK_BIN_DIR):
     try:
         if ZEEK_BIN_DIR not in os.environ["PATH"].split(os.pathsep):
@@ -70,11 +73,17 @@ else:
 # Also when bundling with Zeek, use directories in the install tree
 # for storing the zkg configuration and its variable state. Support
 # for overrides via environment variables simplifies testing.
-ZEEK_ZKG_CONFIG_DIR = os.getenv("ZEEK_ZKG_CONFIG_DIR") or "@ZEEK_ZKG_CONFIG_DIR@"
+ZEEK_ZKG_CONFIG_DIR: str | None = (
+    os.getenv("ZEEK_ZKG_CONFIG_DIR") or "@ZEEK_ZKG_CONFIG_DIR@"
+)
+assert isinstance(ZEEK_ZKG_CONFIG_DIR, str)
 if not os.path.isdir(ZEEK_ZKG_CONFIG_DIR):
     ZEEK_ZKG_CONFIG_DIR = None
 
-ZEEK_ZKG_STATE_DIR = os.getenv("ZEEK_ZKG_STATE_DIR") or "@ZEEK_ZKG_STATE_DIR@"
+ZEEK_ZKG_STATE_DIR: str | None = (
+    os.getenv("ZEEK_ZKG_STATE_DIR") or "@ZEEK_ZKG_STATE_DIR@"
+)
+assert isinstance(ZEEK_ZKG_STATE_DIR, str)
 if not os.path.isdir(ZEEK_ZKG_STATE_DIR):
     ZEEK_ZKG_STATE_DIR = None
 
@@ -95,9 +104,14 @@ from zeekpkg._util import (
 from zeekpkg.package import (
     BUILTIN_SCHEME,
     TRACKING_METHOD_VERSION,
+    InstalledPackage,
+    Package,
+    PackageInfo,
 )
 from zeekpkg.template import (
+    InputError,
     LoadError,
+    OutputError,
     Template,
 )
 from zeekpkg.uservar import (
@@ -105,7 +119,7 @@ from zeekpkg.uservar import (
 )
 
 
-def confirmation_prompt(prompt, default_to_yes=True):
+def confirmation_prompt(prompt: str, default_to_yes: bool = True) -> bool:
     yes = {"y", "ye", "yes"}
 
     if default_to_yes:
@@ -129,8 +143,14 @@ def confirmation_prompt(prompt, default_to_yes=True):
     return False
 
 
-def prompt_for_user_vars(manager, config, configfile, args, pkg_infos):
-    answers = {}
+def prompt_for_user_vars(
+    manager: zeekpkg.Manager,
+    config: configparser.ConfigParser,
+    configfile: str,
+    args: argparse.Namespace,
+    pkg_infos: list[PackageInfo],
+) -> None:
+    answers: dict[str, str] = {}
 
     for info in pkg_infos:
         name = info.package.qualified_name()
@@ -171,26 +191,29 @@ def prompt_for_user_vars(manager, config, configfile, args, pkg_infos):
     manager.user_vars = answers
 
 
-def print_error(*args, **kwargs):
+def print_error(*args: object, **kwargs: Any) -> None:
     print(*args, file=sys.stderr, **kwargs)
 
 
-def config_items(config, section):
+def config_items(
+    config: configparser.ConfigParser,
+    section: str,
+) -> list[tuple[str, str]]:
     # Same as config.items(section), but exclude default keys.
     defaults = {key for key, _ in config.items("DEFAULT")}
     items = sorted(config.items(section))
     return [(key, value) for (key, value) in items if key not in defaults]
 
 
-def file_is_not_empty(path):
+def file_is_not_empty(path: str) -> bool:
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
-def find_configfile(args):
+def find_configfile(args: argparse.Namespace) -> str | None:
     if args.user:
-        configfile = os.path.join(home_config_dir(), "config")
+        configfile: str | None = os.path.join(home_config_dir(), "config")
 
-        if file_is_not_empty(configfile):
+        if configfile and file_is_not_empty(configfile):
             return configfile
 
         return None
@@ -208,19 +231,22 @@ def find_configfile(args):
     return None
 
 
-def home_config_dir():
+def home_config_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".zkg")
 
 
-def default_config_dir():
+def default_config_dir() -> str:
     return ZEEK_ZKG_CONFIG_DIR or home_config_dir()
 
 
-def default_state_dir():
+def default_state_dir() -> str:
     return ZEEK_ZKG_STATE_DIR or home_config_dir()
 
 
-def create_config(args, configfile):
+def create_config(
+    args: argparse.Namespace,
+    configfile: str | None,
+) -> configparser.ConfigParser:
     config = configparser.ConfigParser()
 
     if configfile:
@@ -249,10 +275,22 @@ def create_config(args, configfile):
         if default:
             config.set("templates", "default", default)
 
-    def config_option_set(config, section, option):
-        return config.has_option(section, option) and config.get(section, option)
+    def config_option_set(
+        config: configparser.ConfigParser,
+        section: str,
+        option: str,
+    ) -> str | None:
+        if config.has_option(section, option):
+            return config.get(section, option)
 
-    def get_option(config, section, option, default):
+        return None
+
+    def get_option(
+        config: configparser.ConfigParser,
+        section: str,
+        option: str,
+        default: str,
+    ) -> str:
         if config_option_set(config, section, option):
             return config.get(section, option)
 
@@ -285,7 +323,7 @@ def create_config(args, configfile):
     config.set("paths", "bin_dir", bin_dir)
     config.set("paths", "zeek_dist", zeek_dist)
 
-    def expand_config_values(config, section):
+    def expand_config_values(config: configparser.ConfigParser, section: str) -> None:
         for key, value in config.items(section):
             value = os.path.expandvars(os.path.expanduser(value))
             config.set(section, key, value)
@@ -306,7 +344,7 @@ def create_config(args, configfile):
     return config
 
 
-def active_git_branch(path):
+def active_git_branch(path: str) -> str | None:
     try:
         repo = git.Repo(path)
     except git.NoSuchPathError:
@@ -327,13 +365,13 @@ def active_git_branch(path):
     return str(rval)
 
 
-def is_local_git_repo_url(git_url) -> bool:
+def is_local_git_repo_url(git_url: str) -> bool:
     return (
         git_url.startswith(".") or git_url.startswith("/") or is_local_git_repo(git_url)
     )
 
 
-def is_local_git_repo(git_url):
+def is_local_git_repo(git_url: str) -> bool:
     try:
         # The Repo class takes a file system path as first arg. This
         # can fail in two ways: (1) the path doesn't exist or isn't
@@ -344,7 +382,7 @@ def is_local_git_repo(git_url):
         return False
 
 
-def is_local_git_repo_dirty(git_url):
+def is_local_git_repo_dirty(git_url: str) -> bool:
     if not is_local_git_repo(git_url):
         return False
     try:
@@ -355,7 +393,7 @@ def is_local_git_repo_dirty(git_url):
     return repo.is_dirty(untracked_files=True)
 
 
-def check_local_git_repo(git_url):
+def check_local_git_repo(git_url: str) -> bool:
     if is_local_git_repo_url(git_url):
         if not is_local_git_repo(git_url):
             print_error(f"error: path {git_url} is not a git repository")
@@ -367,7 +405,10 @@ def check_local_git_repo(git_url):
     return True
 
 
-def create_manager(args, config):
+def create_manager(
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+) -> zeekpkg.Manager:
     state_dir = config.get("paths", "state_dir")
     script_dir = config.get("paths", "script_dir")
     plugin_dir = config.get("paths", "plugin_dir")
@@ -386,7 +427,7 @@ def create_manager(args, config):
         if error.errno == errno.EACCES:
             print_error(f"{type(error).__name__}: {error}")
 
-            def check_permission(d):
+            def check_permission(d: str) -> bool:
                 if os.access(d, os.W_OK):
                     return True
 
@@ -426,17 +467,19 @@ def create_manager(args, config):
         extra_sources.append((key, value))
 
     for key, value in extra_sources + config_items(config, "sources"):
-        error = manager.add_source(name=key, git_url=value)
-
-        if error:
+        if err := manager.add_source(name=key, git_url=value):
             print_error(
-                f'warning: skipped using package source named "{key}": {error}',
+                f'warning: skipped using package source named "{key}": {err}',
             )
 
     return manager
 
 
-def get_changed_state(manager, saved_state, pkg_lst):
+def get_changed_state(
+    manager: zeekpkg.Manager,
+    saved_state: dict[str, bool],
+    pkg_lst: list[str],
+) -> str:
     """Returns the list of packages that have changed loaded state.
 
     Args:
@@ -467,17 +510,27 @@ def get_changed_state(manager, saved_state, pkg_lst):
 
 
 class InstallWorker(threading.Thread):
-    def __init__(self, manager, package_name, package_version):
+    def __init__(
+        self,
+        manager: zeekpkg.Manager,
+        package_name: str,
+        package_version: str,
+    ) -> None:
         super().__init__()
         self.manager = manager
         self.package_name = package_name
         self.package_version = package_version
         self.error = ""
 
-    def run(self):
+    def run(self) -> None:
         self.error = self.manager.install(self.package_name, self.package_version)
 
-    def wait(self, msg=None, out=sys.stdout, tty_only=True):
+    def wait(
+        self,
+        msg: str | None = None,
+        out: TextIO | Any = sys.stdout,
+        tty_only: bool = True,
+    ) -> None:
         """Blocks until this thread ends, optionally writing liveness indicators.
 
         This never returns until this thread dies (i.e., is_alive() is False).
@@ -514,12 +567,17 @@ class InstallWorker(threading.Thread):
             out.flush()
 
 
-def cmd_test(manager, args, config, configfile):
+def cmd_test(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     if args.version and len(args.package) > 1:
         print_error('error: "test --version" may only be used for a single package')
         sys.exit(1)
 
-    package_infos = []
+    package_infos: list[tuple[PackageInfo, str]] = []
 
     for name in args.package:
         if not check_local_git_repo(name):
@@ -585,12 +643,17 @@ def cmd_test(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_install(manager, args, config, configfile):
+def cmd_install(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     if args.version and len(args.package) > 1:
         print_error('error: "install --version" may only be used for a single package')
         sys.exit(1)
 
-    package_infos = []
+    package_infos: list[tuple[PackageInfo, str, bool]] = []
 
     for name in args.package:
         if not check_local_git_repo(name):
@@ -618,13 +681,13 @@ def cmd_install(manager, args, config, configfile):
 
     # We modify package_infos below, so copy current state to preserve list of
     # packages requested by caller:
-    orig_pkgs, new_pkgs = package_infos.copy(), []
+    orig_pkgs = package_infos.copy()
+    new_pkgs: list[tuple[PackageInfo, str, bool]] = []
 
     if not args.nodeps:
-        to_validate = [
-            (info.package.qualified_name(), version)
-            for info, version, _ in package_infos
-        ]
+        to_validate = []
+        for info, version, _ in package_infos:
+            to_validate.append((info.package.qualified_name(), version))
         invalid_reason, new_pkgs = manager.validate_dependencies(
             to_validate,
             ignore_suggestions=args.nosuggestions,
@@ -756,6 +819,10 @@ def cmd_install(manager, args, config, configfile):
         is_overwriting = False
         ipkg = manager.find_installed_package(name)
 
+        modifications = []
+        backup_files = []
+        prev_upstream_config_files = []
+
         if ipkg:
             is_overwriting = True
             modifications = manager.modified_config_files(ipkg)
@@ -772,7 +839,7 @@ def cmd_install(manager, args, config, configfile):
             continue
 
         ipkg = manager.find_installed_package(name)
-        print(f'Installed "{name}" ({ipkg.status.current_version})')
+        print(f'Installed "{name}" ({ipkg.status.current_version if ipkg else ""})')
 
         if is_overwriting:
             for i, mf in enumerate(modifications):
@@ -797,7 +864,7 @@ def cmd_install(manager, args, config, configfile):
                 print("\tPrevious, locally modified version backed up to:")
                 print("\t\t" + backup_files[i])
 
-        if manager.has_scripts(ipkg):
+        if ipkg and manager.has_scripts(ipkg):
             load_error = manager.load(name)
 
             if load_error:
@@ -812,11 +879,11 @@ def cmd_install(manager, args, config, configfile):
             _listing, saved_state = "", manager.loaded_package_states()
             name = info.package.qualified_name()
 
-            load_error = manager.load_with_dependencies(
+            load_error2 = manager.load_with_dependencies(
                 zeekpkg.package.name_from_path(name),
             )
 
-            for _name, _error in load_error:
+            for _name, _error in load_error2:
                 if not _error:
                     _listing += f"  {_name}\n"
 
@@ -850,14 +917,19 @@ def cmd_install(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_bundle(manager, args, config, configfile):
+def cmd_bundle(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     packages_to_bundle = []
     prefer_existing_clones = False
 
     if args.manifest:
         if len(args.manifest) == 1 and os.path.isfile(args.manifest[0]):
             config = configparser.ConfigParser(delimiters="=")
-            config.optionxform = str
+            config.optionxform = lambda optionstr: optionstr  # type: ignore
 
             if config.read(args.manifest[0]) and config.has_section("bundle"):
                 packages = config.items("bundle")
@@ -869,14 +941,15 @@ def cmd_bundle(manager, args, config, configfile):
             packages = [(name, "") for name in args.manifest]
 
         to_validate = []
-        new_pkgs = []
+        new_pkgs: list[tuple[PackageInfo, str, bool]] = []
 
         for name, version in packages:
             if not check_local_git_repo(name):
                 sys.exit(1)
 
             if not version:
-                version = active_git_branch(name)
+                if v := active_git_branch(name):
+                    version = v
 
             info = manager.info(name, version=version, prefer_installed=False)
 
@@ -923,6 +996,7 @@ def cmd_bundle(manager, args, config, configfile):
         prefer_existing_clones = True
 
         for ipkg in manager.installed_packages():
+            assert ipkg.status.current_version
             packages_to_bundle.append(
                 (
                     ipkg.package.qualified_name(),
@@ -973,7 +1047,12 @@ def cmd_bundle(manager, args, config, configfile):
     print(f"Bundle successfully written: {args.bundle_filename}")
 
 
-def cmd_unbundle(manager, args, config, configfile):
+def cmd_unbundle(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     prev_load_status = {}
 
     for ipkg in manager.installed_packages():
@@ -1073,13 +1152,13 @@ def cmd_unbundle(manager, args, config, configfile):
         else:
             need_load = True
 
-        ipkg = manager.find_installed_package(git_url)
+        ipkg2 = manager.find_installed_package(git_url)
 
-        if not ipkg:
+        if not ipkg2:
             print(f'Skipped loading "{git_url}": failed to install')
             continue
 
-        name = ipkg.package.qualified_name()
+        name = ipkg2.package.qualified_name()
 
         if not need_load:
             print(f'Skipped loading "{name}"')
@@ -1095,10 +1174,15 @@ def cmd_unbundle(manager, args, config, configfile):
     print("Unbundling complete.")
 
 
-def cmd_remove(manager, args, config, configfile):
-    packages_to_remove = []
+def cmd_remove(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
+    packages_to_remove: list[InstalledPackage] = []
 
-    def package_will_be_removed(pkg_name):
+    def package_will_be_removed(pkg_name: str) -> bool:
         for _ipkg in packages_to_remove:
             if _ipkg.package.name == pkg_name:
                 return True
@@ -1142,6 +1226,7 @@ def cmd_remove(manager, args, config, configfile):
 
             for pkg_name in sorted(dependers_to_unload):
                 ipkg = manager.find_installed_package(pkg_name)
+                assert ipkg
                 print(f"  {ipkg.package.qualified_name()}")
 
             print()
@@ -1151,6 +1236,7 @@ def cmd_remove(manager, args, config, configfile):
 
     for pkg_name in sorted(dependers_to_unload):
         ipkg = manager.find_installed_package(pkg_name)
+        assert ipkg
         name = ipkg.package.qualified_name()
 
         if manager.unload(name):
@@ -1185,7 +1271,12 @@ def cmd_remove(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_purge(manager, args, config, configfile):
+def cmd_purge(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     packages_to_remove = manager.installed_packages()
     packages_to_remove = [p for p in packages_to_remove if not p.is_builtin()]
 
@@ -1230,7 +1321,7 @@ def cmd_purge(manager, args, config, configfile):
         sys.exit(1)
 
 
-def outdated(manager):
+def outdated(manager: zeekpkg.Manager) -> list[str]:
     return [
         ipkg.package.qualified_name()
         for ipkg in manager.installed_packages()
@@ -1238,7 +1329,12 @@ def outdated(manager):
     ]
 
 
-def cmd_refresh(manager, args, config, configfile):
+def cmd_refresh(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     if not args.sources:
         args.sources = list(manager.sources.keys())
 
@@ -1312,6 +1408,8 @@ def cmd_refresh(manager, args, config, configfile):
 
         for name in diff:
             ipkg = manager.find_installed_package(name)
+            if not ipkg:
+                continue
             version_change = version_change_string(manager, ipkg)
             print(f"\t\t{name} {version_change}")
 
@@ -1321,7 +1419,10 @@ def cmd_refresh(manager, args, config, configfile):
         sys.exit(2)
 
 
-def version_change_string(manager, installed_package):
+def version_change_string(
+    manager: zeekpkg.Manager,
+    installed_package: InstalledPackage,
+) -> str:
     old_version = installed_package.status.current_version
     new_version = old_version
     version_change = ""
@@ -1339,7 +1440,12 @@ def version_change_string(manager, installed_package):
     return version_change
 
 
-def cmd_upgrade(manager, args, config, configfile):
+def cmd_upgrade(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     if args.package:
         pkg_list = args.package
     else:
@@ -1378,6 +1484,8 @@ def cmd_upgrade(manager, args, config, configfile):
         if ipkg.status.tracking_method == TRACKING_METHOD_VERSION and info.versions:
             next_version = info.versions[-1]
 
+        assert next_version
+
         outdated_packages.append((info, next_version, False))
         version_change = version_change_string(manager, ipkg)
         package_listing += f"  {name} {version_change}\n"
@@ -1386,7 +1494,7 @@ def cmd_upgrade(manager, args, config, configfile):
         print("All packages already up-to-date.")
         return
 
-    new_pkgs = []
+    new_pkgs: list[tuple[PackageInfo, str, bool]] = []
 
     if not args.nodeps:
         to_validate = [
@@ -1425,16 +1533,16 @@ def cmd_upgrade(manager, args, config, configfile):
 
         extdep_listing = ""
 
-        for info, version, _ in allpkgs:
+        for info, version2, _ in allpkgs:
             name = info.package.qualified_name()
             extdeps = info.dependencies(field="external_depends")
 
             if extdeps is None:
-                extdep_listing += f"  from {name} ({version}):\n    <malformed>\n"
+                extdep_listing += f"  from {name} ({version2}):\n    <malformed>\n"
                 continue
 
             if extdeps:
-                extdep_listing += f"  from {name} ({version}):\n"
+                extdep_listing += f"  from {name} ({version2}):\n"
 
                 for extdep, semver in sorted(extdeps.items()):
                     extdep_listing += f"    {extdep} {semver}\n"
@@ -1459,12 +1567,12 @@ def cmd_upgrade(manager, args, config, configfile):
     )
 
     if not args.skiptests:
-        for info, version, _ in outdated_packages:
+        for info, version3, _ in outdated_packages:
             name = info.package.qualified_name()
 
             # Get info object for the next version as there may have been a
             # test_command added during the upgrade.
-            next_info = manager.info(name, version=version, prefer_installed=False)
+            next_info = manager.info(name, version=version3, prefer_installed=False)
             if next_info.invalid_reason:
                 print_error(
                     f'error: invalid package "{name}": {next_info.invalid_reason}',
@@ -1485,7 +1593,7 @@ def cmd_upgrade(manager, args, config, configfile):
             # tests fail because of it, they'll also need to say --skiptests.
             error, passed, test_dir = manager.test(
                 name,
-                version,
+                version3,
                 test_dependencies=True,
             )
 
@@ -1526,6 +1634,7 @@ def cmd_upgrade(manager, args, config, configfile):
             continue
 
         ipkg = manager.find_installed_package(name)
+        assert ipkg
         print(f'Installed "{name}" ({ipkg.status.current_version})')
 
         if manager.has_scripts(ipkg):
@@ -1545,6 +1654,7 @@ def cmd_upgrade(manager, args, config, configfile):
             name = info.package.git_url
 
         ipkg = manager.find_installed_package(name)
+        assert ipkg
         modifications = manager.modified_config_files(ipkg)
         backup_files = manager.backup_modified_files(name, modifications)
         prev_upstream_config_files = manager.save_temporary_config_files(ipkg)
@@ -1556,6 +1666,7 @@ def cmd_upgrade(manager, args, config, configfile):
             had_failure = True
         else:
             ipkg = manager.find_installed_package(name)
+            assert ipkg
             print(f'Upgraded "{name}" ({ipkg.status.current_version})')
 
         for i, mf in enumerate(modifications):
@@ -1584,7 +1695,12 @@ def cmd_upgrade(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_load(manager, args, config, configfile):
+def cmd_load(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     had_failure = False
     load_error = False
     dep_error_listing = ""
@@ -1603,8 +1719,10 @@ def cmd_load(manager, args, config, configfile):
 
         name = ipkg.package.qualified_name()
 
+        saved_state = {}
+
         if args.nodeps:
-            load_error = manager.load(name)
+            load_error = bool(manager.load(name))
         else:
             saved_state = manager.loaded_package_states()
             dep_error_listing, load_error = "", False
@@ -1647,12 +1765,17 @@ def cmd_load(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_unload(manager, args, config, configfile):
+def cmd_unload(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     had_failure = False
-    packages_to_unload = []
+    packages_to_unload: list[InstalledPackage] = []
     dependers_to_unload = set()
 
-    def package_will_be_unloaded(pkg_name):
+    def package_will_be_unloaded(pkg_name: str) -> bool:
         for _ipkg in packages_to_unload:
             if _ipkg.package.name == pkg_name:
                 return True
@@ -1701,6 +1824,7 @@ def cmd_unload(manager, args, config, configfile):
 
             for pkg_name in sorted(dependers_to_unload):
                 ipkg = manager.find_installed_package(pkg_name)
+                assert ipkg
                 print(f"  {ipkg.package.qualified_name()}")
 
             print()
@@ -1712,7 +1836,9 @@ def cmd_unload(manager, args, config, configfile):
                 return
 
     for pkg_name in sorted(dependers_to_unload):
-        packages_to_unload.append(manager.find_installed_package(pkg_name))
+        ipkg = manager.find_installed_package(pkg_name)
+        assert ipkg
+        packages_to_unload.append(ipkg)
 
     for ipkg in packages_to_unload:
         name = ipkg.package.qualified_name()
@@ -1727,7 +1853,12 @@ def cmd_unload(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_pin(manager, args, config, configfile):
+def cmd_pin(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     had_failure = False
 
     for name in args.package:
@@ -1758,7 +1889,12 @@ def cmd_pin(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_unpin(manager, args, config, configfile):
+def cmd_unpin(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     had_failure = False
 
     for name in args.package:
@@ -1789,8 +1925,15 @@ def cmd_unpin(manager, args, config, configfile):
         sys.exit(1)
 
 
-def _get_filtered_packages(manager, category):
-    pkg_dict = {}
+def _get_filtered_packages(
+    manager: zeekpkg.Manager,
+    category: str,
+) -> (
+    dict[str, Package]
+    | dict[str, InstalledPackage]
+    | dict[str, Package | InstalledPackage]
+):
+    pkg_dict: dict[str, Package | InstalledPackage] = {}
 
     for ipkg in manager.installed_packages():
         pkg_dict[ipkg.package.qualified_name()] = ipkg
@@ -1840,7 +1983,12 @@ def _get_filtered_packages(manager, category):
     return filtered_pkgs
 
 
-def cmd_list(manager, args, config, configfile):
+def cmd_list(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     filtered_pkgs = _get_filtered_packages(manager, args.category)
 
     for pkg_name, val in sorted(filtered_pkgs.items()):
@@ -1864,7 +2012,12 @@ def cmd_list(manager, args, config, configfile):
         print(out)
 
 
-def cmd_search(manager, args, config, configfile):
+def cmd_search(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     src_pkgs = manager.source_packages()
     matches = set()
 
@@ -1888,7 +2041,8 @@ def cmd_search(manager, args, config, configfile):
 
         else:
             for pkg in src_pkgs:
-                if search_text in pkg.name_with_source_directory():
+                name = pkg.name_with_source_directory()
+                if name and search_text in name:
                     matches.add(pkg)
 
                 for tag in pkg.tags():
@@ -1915,13 +2069,18 @@ def cmd_search(manager, args, config, configfile):
         print("no matches")
 
 
-def cmd_info(manager, args, config, configfile):
+def cmd_info(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     if args.version and len(args.package) > 1:
         print_error('error: "info --version" may only be used for a single package')
         sys.exit(1)
 
     # Dictionary for storing package info to output as JSON
-    pkginfo = {}
+    pkginfo: dict[str, Any] = {}
     had_invalid_package = False
 
     if len(args.package) == 1:
@@ -1941,15 +2100,15 @@ def cmd_info(manager, args, config, configfile):
         package_names = args.package
 
     for name in package_names:
-        info = manager.info(
+        info2 = manager.info(
             name,
             version=args.version,
             prefer_installed=(not args.nolocal),
             update_submodules=False,
         )
 
-        if info.package:
-            name = info.package.qualified_name()
+        if info2.package:
+            name = info2.package.qualified_name()
 
         if args.json:
             pkginfo[name] = {}
@@ -1957,75 +2116,75 @@ def cmd_info(manager, args, config, configfile):
         else:
             print(f'"{name}" info:')
 
-        if info.invalid_reason:
+        if info2.invalid_reason:
             if args.json:
-                pkginfo[name]["invalid"] = info.invalid_reason
+                pkginfo[name]["invalid"] = info2.invalid_reason
             else:
-                print(f"\tinvalid package: {info.invalid_reason}\n")
+                print(f"\tinvalid package: {info2.invalid_reason}\n")
 
             had_invalid_package = True
             continue
 
         if args.json:
-            pkginfo[name]["url"] = info.package.git_url
-            pkginfo[name]["versions"] = info.versions
+            pkginfo[name]["url"] = info2.package.git_url
+            pkginfo[name]["versions"] = info2.versions
         else:
-            print(f"\turl: {info.package.git_url}")
-            print(f"\tversions: {info.versions}")
+            print(f"\turl: {info2.package.git_url}")
+            print(f"\tversions: {info2.versions}")
 
-        if info.status:
+        if info2.status:
             if args.json:
                 pkginfo[name]["install_status"] = {}
 
-                for key, value in sorted(info.status.__dict__.items()):
+                for key, value in sorted(info2.status.__dict__.items()):
                     pkginfo[name]["install_status"][key] = value
             else:
                 print("\tinstall status:")
 
-                for key, value in sorted(info.status.__dict__.items()):
+                for key, value in sorted(info2.status.__dict__.items()):
                     print(f"\t\t{key} = {value}")
 
         if args.json:
-            if info.metadata_file:
-                pkginfo[name]["metadata_file"] = info.metadata_file
-            pkginfo[name]["metadata"][info.metadata_version] = {}
+            if info2.metadata_file:
+                pkginfo[name]["metadata_file"] = info2.metadata_file
+            pkginfo[name]["metadata"][info2.metadata_version] = {}
         else:
-            if info.metadata_file:
-                print(f"\tmetadata file: {info.metadata_file}")
-            print(f'\tmetadata (from version "{info.metadata_version}"):')
+            if info2.metadata_file:
+                print(f"\tmetadata file: {info2.metadata_file}")
+            print(f'\tmetadata (from version "{info2.metadata_version}"):')
 
-        if len(info.metadata) == 0:
+        if len(info2.metadata) == 0:
             if not args.json:
                 print("\t\t<empty metadata file>")
         else:
             if args.json:
                 _fill_metadata_version(
-                    pkginfo[name]["metadata"][info.metadata_version],
-                    info.metadata,
+                    pkginfo[name]["metadata"][info2.metadata_version],
+                    info2.metadata,
                 )
             else:
-                for key, value in sorted(info.metadata.items()):
+                for key, value in sorted(info2.metadata.items()):
                     value = value.replace("\n", "\n\t\t\t")
                     print(f"\t\t{key} = {value}")
 
         # If --json and --allvers given, check for multiple versions and
         # add the metadata for each version to the pkginfo.
         if args.json and args.allvers:
-            for vers in info.versions:
+            for vers in info2.versions:
                 # Skip the version that was already processed
-                if vers != info.metadata_version:
-                    info2 = manager.info(
+                if vers != info2.metadata_version:
+                    info3 = manager.info(
                         name,
                         vers,
                         prefer_installed=(not args.nolocal),
                         update_submodules=False,
                     )
-                    pkginfo[name]["metadata"][info2.metadata_version] = {}
-                    if info2.metadata_file:
-                        pkginfo[name]["metadata_file"] = info2.metadata_file
+                    pkginfo[name]["metadata"][info3.metadata_version] = {}
+                    if info3.metadata_file:
+                        pkginfo[name]["metadata_file"] = info3.metadata_file
                     _fill_metadata_version(
-                        pkginfo[name]["metadata"][info2.metadata_version],
-                        info2.metadata,
+                        pkginfo[name]["metadata"][info3.metadata_version],
+                        info3.metadata,
                     )
 
         if not args.json:
@@ -2038,7 +2197,10 @@ def cmd_info(manager, args, config, configfile):
         sys.exit(1)
 
 
-def _fill_metadata_version(pkginfo_name_metadata_version, info_metadata):
+def _fill_metadata_version(
+    pkginfo_name_metadata_version: dict[str, Any],
+    info_metadata: dict[str, str],
+) -> None:
     """Fill a dict with metadata information.
 
         This helper function is called by cmd_info to fill metadata information
@@ -2066,7 +2228,12 @@ def _fill_metadata_version(pkginfo_name_metadata_version, info_metadata):
             pkginfo_name_metadata_version[key] = value
 
 
-def cmd_config(manager, args, config, configfile):
+def cmd_config(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     if args.config_param == "all":
         out = io.StringIO()
         config.write(out)
@@ -2083,7 +2250,12 @@ def cmd_config(manager, args, config, configfile):
         print(config.get("paths", args.config_param))
 
 
-def cmd_autoconfig(manager, args, config, configfile):
+def cmd_autoconfig(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     if args.user:
         configfile = os.path.join(home_config_dir(), "config")
         with open(configfile, "w", encoding=std_encoding(sys.stdout)) as f:
@@ -2105,6 +2277,7 @@ def cmd_autoconfig(manager, args, config, configfile):
         universal_newlines=True,
     )
 
+    assert cmd.stdout
     script_dir = read_zeek_config_line(cmd.stdout)
     plugin_dir = read_zeek_config_line(cmd.stdout)
     bin_dir = os.path.join(read_zeek_config_line(cmd.stdout), "bin")
@@ -2120,7 +2293,13 @@ def cmd_autoconfig(manager, args, config, configfile):
 
     config_file_exists = os.path.isfile(configfile)
 
-    def change_config_value(config, section, option, new_value, use_prompt):
+    def change_config_value(
+        config: configparser.ConfigParser,
+        section: str,
+        option: str,
+        new_value: str,
+        use_prompt: bool,
+    ) -> None:
         if not use_prompt:
             config.set(section, option, new_value)
             return
@@ -2149,7 +2328,12 @@ def cmd_autoconfig(manager, args, config, configfile):
     print(f"Successfully wrote config file to {configfile}")
 
 
-def cmd_env(manager, args, config, configfile):
+def cmd_env(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     zeek_config = find_program("zeek-config")
     zeekpath = os.environ.get("ZEEKPATH")
     pluginpath = os.environ.get("ZEEK_PLUGIN_PATH")
@@ -2162,6 +2346,8 @@ def cmd_env(manager, args, config, configfile):
             bufsize=1,
             universal_newlines=True,
         )
+
+        assert cmd.stdout
         line1 = read_zeek_config_line(cmd.stdout)
         line2 = read_zeek_config_line(cmd.stdout)
 
@@ -2177,7 +2363,7 @@ def cmd_env(manager, args, config, configfile):
     zeekpaths.append(manager.zeekpath())
     pluginpaths.append(manager.zeek_plugin_path())
 
-    def remove_redundant_paths(paths):
+    def remove_redundant_paths(paths: list[str]) -> list[str]:
         return list(OrderedDict.fromkeys(paths))
 
     zeekpaths = remove_redundant_paths(zeekpaths)
@@ -2193,7 +2379,12 @@ def cmd_env(manager, args, config, configfile):
         print(f"export PATH={manager.bin_dir}:$PATH")
 
 
-def cmd_create(manager, args, config, configfile):
+def cmd_create(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     tmplname = (
         args.template
         or config.get("templates", "default", fallback=None)
@@ -2261,7 +2452,7 @@ def cmd_create(manager, args, config, configfile):
         # Verify that resulting template parameters are formatted correctly
         try:
             package.do_validate(tmpl)
-        except zeekpkg.template.InputError as error:
+        except InputError as error:
             print_error("error: template input invalid, " + str(error))
             sys.exit(1)
 
@@ -2285,7 +2476,7 @@ def cmd_create(manager, args, config, configfile):
                     sys.exit(1)
 
             package.do_instantiate(tmpl, args.packagedir, args.force)
-        except zeekpkg.template.OutputError as error:
+        except OutputError as error:
             print_error("error: template instantiation failed, " + str(error))
             sys.exit(1)
     except Exception as error:
@@ -2295,7 +2486,12 @@ def cmd_create(manager, args, config, configfile):
         sys.exit(1)
 
 
-def cmd_template_info(manager, args, config, configfile):
+def cmd_template_info(
+    manager: zeekpkg.Manager,
+    args: argparse.Namespace,
+    config: configparser.ConfigParser,
+    configfile: str,
+) -> None:
     tmplname = (
         args.template
         or config.get("templates", "default", fallback=None)
@@ -2334,7 +2530,7 @@ def cmd_template_info(manager, args, config, configfile):
 
 class BundleHelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
     # Workaround for underlying argparse bug: https://bugs.python.org/issue9338
-    def _format_args(self, action, default_metavar):
+    def _format_args(self, action: argparse.Action, default_metavar: str) -> str:
         rval = super()._format_args(action, default_metavar)
 
         if action.nargs == argparse.ZERO_OR_MORE:
@@ -2345,7 +2541,7 @@ class BundleHelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
         return rval
 
 
-def top_level_parser():
+def top_level_parser() -> argparse.ArgumentParser:
     top_parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="A command-line package manager for Zeek.",
@@ -2392,7 +2588,7 @@ def top_level_parser():
     return top_parser
 
 
-def argparser():
+def argparser() -> argparse.ArgumentParser:
     pkg_name_help = (
         "The name(s) of package(s) to operate on.  The package"
         " may be named in several ways.  If the package is part"
@@ -2409,7 +2605,10 @@ def argparser():
         ' names work: "foo", "alice/foo", "zeek/alice/foo".'
     )
 
-    def add_uservar_args(parser, force_help=None):
+    def add_uservar_args(
+        parser: argparse.ArgumentParser,
+        force_help: str | None = None,
+    ) -> None:
         parser.add_argument(
             "--force",
             action="store_true",
@@ -2425,7 +2624,7 @@ def argparser():
             " Use repeatedly as needed for multiple values.",
         )
 
-    def add_json_args(parser, help_text):
+    def add_json_args(parser: argparse.ArgumentParser, help_text: str) -> None:
         parser.add_argument("--json", action="store_true", help=help_text)
         parser.add_argument(
             "--jsonpretty",
@@ -3016,13 +3215,13 @@ def argparser():
     )
     sub_parser.set_defaults(run_cmd=cmd_template_info)
 
-    if "argcomplete" in sys.modules:
-        argcomplete.autocomplete(top_parser)
+    if argcomplete_ := sys.modules.get("argcomplete"):
+        argcomplete_.autocomplete(top_parser)
 
     return top_parser
 
 
-def main():
+def main() -> None:
     args = argparser().parse_args()
 
     formatter = logging.Formatter(

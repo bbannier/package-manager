@@ -2,6 +2,7 @@
 These are meant to be private utility methods for internal use.
 """
 
+import configparser
 import errno
 import importlib.machinery
 import os
@@ -9,12 +10,14 @@ import shutil
 import string
 import tarfile
 import types
+from collections.abc import Callable, Iterable
+from typing import IO, TextIO, cast
 
 import git
 import semantic_version as semver
 
 
-def make_dir(path):
+def make_dir(path: str) -> None:
     """Create a directory or do nothing if it already exists.
 
     Raises:
@@ -30,7 +33,7 @@ def make_dir(path):
             raise
 
 
-def normalize_version_tag(tag):
+def normalize_version_tag(tag: str) -> str:
     """Given version string "vX.Y.Z", returns "X.Y.Z".
     Returns other input strings unchanged.
     """
@@ -40,7 +43,7 @@ def normalize_version_tag(tag):
     return tag
 
 
-def delete_path(path):
+def delete_path(path: str) -> None:
     if os.path.islink(path):
         os.remove(path)
         return
@@ -54,12 +57,16 @@ def delete_path(path):
         os.remove(path)
 
 
-def copy_over_path(src, dst, ignore=None):
+def copy_over_path(
+    src: str,
+    dst: str,
+    ignore: Callable[[str, list[str]], Iterable[str]] | None = None,
+) -> None:
     delete_path(dst)
     shutil.copytree(src, dst, symlinks=True, ignore=ignore)
 
 
-def make_symlink(target_path, link_path, force=True):
+def make_symlink(target_path: str, link_path: str, force: bool = True) -> None:
     try:
         os.symlink(target_path, link_path)
     except OSError as error:
@@ -70,7 +77,7 @@ def make_symlink(target_path, link_path, force=True):
             raise error
 
 
-def safe_tarfile_extractall(tfile, destdir):
+def safe_tarfile_extractall(tfile: str, destdir: str) -> None:
     """Wrapper to tarfile.extractall(), checking for path traversal.
 
     This adds the safeguards the Python docs for tarfile.extractall warn about:
@@ -88,7 +95,7 @@ def safe_tarfile_extractall(tfile, destdir):
         Exception: if the tarfile would extract outside destdir
     """
 
-    def is_within_directory(directory, target):
+    def is_within_directory(directory: str, target: str) -> bool:
         abs_directory = os.path.abspath(directory)
         abs_target = os.path.abspath(target)
         prefix = os.path.commonprefix([abs_directory, abs_target])
@@ -103,7 +110,7 @@ def safe_tarfile_extractall(tfile, destdir):
         tar.extractall(destdir)
 
 
-def find_sentence_end(s):
+def find_sentence_end(s: str) -> int:
     beg = 0
 
     while True:
@@ -123,7 +130,12 @@ def find_sentence_end(s):
         beg = period_idx + 1
 
 
-def git_clone(git_url, dst_path, shallow=False, recursive=True):
+def git_clone(
+    git_url: str,
+    dst_path: str,
+    shallow: bool = False,
+    recursive: bool = True,
+) -> git.Repo:
     if shallow:
         try:
             git.Git().clone(
@@ -163,7 +175,7 @@ def git_clone(git_url, dst_path, shallow=False, recursive=True):
     return rval
 
 
-def git_checkout(clone, version, update_submodules=True):
+def git_checkout(clone: git.Repo, version: str, update_submodules: bool = True) -> None:
     """Checkout a version of a git repo along with any associated submodules.
 
     Args:
@@ -183,7 +195,7 @@ def git_checkout(clone, version, update_submodules=True):
         clone.git.submodule("update", "--recursive", "--init")
 
 
-def git_default_branch(repo):
+def git_default_branch(repo: git.Repo) -> str:
     """Return default branch of a git repo, like 'main' or 'master'.
 
     If the Git repository has a remote named 'origin', the default branch
@@ -206,19 +218,17 @@ def git_default_branch(repo):
     if remote:
         # Technically possible that remote has no HEAD, so guard against that.
         try:
-            head_ref_name = remote.refs.HEAD.ref.name
-        except Exception:
-            head_ref_name = None
-
-        if head_ref_name:
+            ref = cast(git.Reference, repo.head.ref)
             remote_prefix = "origin/"
 
-            if head_ref_name.startswith(remote_prefix):
-                return head_ref_name[len(remote_prefix) :]
+            if ref.name.startswith(remote_prefix):
+                return ref.name[len(remote_prefix) :]
 
-            return head_ref_name
+            return ref.name
+        except Exception:
+            ...
 
-    ref_names = [ref.name for ref in repo.refs]
+    ref_names = [ref.name for ref in repo.references]
 
     if "main" in ref_names:
         return "main"
@@ -228,13 +238,14 @@ def git_default_branch(repo):
 
     try:
         # See if there's a branch currently checked out
-        return repo.head.ref.name
+        ref = cast(git.Reference, repo.head.ref)
+        return ref.name
     except TypeError:
         # No branch checked out, return commit hash
         return repo.head.object.hexsha
 
 
-def git_version_tags(repo):
+def git_version_tags(repo: git.Repo) -> list[str]:
     """Returns semver-sorted list of version tag strings in the given repo."""
     tags = []
 
@@ -253,7 +264,7 @@ def git_version_tags(repo):
     return [t[1] for t in sorted(tags, key=lambda e: e[2])]
 
 
-def git_pull(repo):
+def git_pull(repo: git.Repo) -> None:
     """Does a git pull followed up a submodule update.
 
     Args:
@@ -267,7 +278,7 @@ def git_pull(repo):
     repo.git.submodule("update", "--recursive", "--init")
 
 
-def git_remote_urls(repo):
+def git_remote_urls(repo: git.Repo) -> dict[str, str]:
     """Returns a map of remote name -> URL string for configured remotes.
 
     You'd normally use repo.remotes[n].urls for this, but with old git versions
@@ -290,7 +301,7 @@ def git_remote_urls(repo):
     return remotes
 
 
-def is_sha1(s):
+def is_sha1(s: str | None) -> bool:
     if not s:
         return False
 
@@ -301,11 +312,11 @@ def is_sha1(s):
     return all(c in hexdigits for c in s)
 
 
-def is_exe(path):
+def is_exe(path: str) -> bool:
     return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-def find_program(prog_name):
+def find_program(prog_name: str) -> str:
     path, _ = os.path.split(prog_name)
 
     if path:
@@ -350,7 +361,7 @@ def get_zeek_info() -> ZeekInfo:
     return _zeek_info
 
 
-def std_encoding(stream):
+def std_encoding(stream: TextIO) -> str:
     if stream.encoding:
         return stream.encoding
 
@@ -362,11 +373,11 @@ def std_encoding(stream):
     return locale.getpreferredencoding()
 
 
-def read_zeek_config_line(stdout):
+def read_zeek_config_line(stdout: IO[str]) -> str:
     return stdout.readline().strip()
 
 
-def get_zeek_version():
+def get_zeek_version() -> str:
     zeek_config = find_program("zeek-config")
 
     if not zeek_config:
@@ -382,10 +393,11 @@ def get_zeek_version():
         universal_newlines=True,
     )
 
+    assert cmd.stdout
     return read_zeek_config_line(cmd.stdout)
 
 
-def load_source(filename):
+def load_source(filename: str) -> types.ModuleType:
     """Loads given Python script from disk.
 
     Args:
@@ -408,7 +420,10 @@ def load_source(filename):
     return mod
 
 
-def configparser_section_dict(parser, section):
+def configparser_section_dict(
+    parser: configparser.ConfigParser,
+    section: str,
+) -> dict[str, str]:
     """Returns a dict representing a ConfigParser section.
 
     Args:

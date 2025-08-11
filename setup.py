@@ -3,7 +3,7 @@ import pathlib
 from setuptools import setup
 
 
-def version():
+def version() -> str:
     return pathlib.Path("VERSION").read_text().replace("-", ".dev", 1).strip()
 
 
