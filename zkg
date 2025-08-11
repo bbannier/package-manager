@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2023,8 +2024,6 @@ def cmd_search(
 
     for search_text in args.search_text:
         if search_text[0] == "/" and search_text[-1] == "/":
-            import re
-
             try:
                 regex = re.compile(search_text[1:-1])
             except re.error as error:
@@ -2156,16 +2155,15 @@ def cmd_info(
         if len(info2.metadata) == 0:
             if not args.json:
                 print("\t\t<empty metadata file>")
+        elif args.json:
+            _fill_metadata_version(
+                pkginfo[name]["metadata"][info2.metadata_version],
+                info2.metadata,
+            )
         else:
-            if args.json:
-                _fill_metadata_version(
-                    pkginfo[name]["metadata"][info2.metadata_version],
-                    info2.metadata,
-                )
-            else:
-                for key, value in sorted(info2.metadata.items()):
-                    value = value.replace("\n", "\n\t\t\t")
-                    print(f"\t\t{key} = {value}")
+            for key, value in sorted(info2.metadata.items()):
+                value = value.replace("\n", "\n\t\t\t")
+                print(f"\t\t{key} = {value}")
 
         # If --json and --allvers given, check for multiple versions and
         # add the metadata for each version to the pkginfo.
@@ -2217,7 +2215,7 @@ def _fill_metadata_version(
         New dict entries are added to pkginfo_name_metadata_version.
     """
     for key, value in info_metadata.items():
-        if key == "depends" or key == "suggests":
+        if key in {"depends", "suggests"}:
             pkginfo_name_metadata_version[key] = {}
             deps = value.split("\n")
 

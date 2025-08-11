@@ -5,9 +5,11 @@ These are meant to be private utility methods for internal use.
 import configparser
 import errno
 import importlib.machinery
+import locale
 import os
 import shutil
 import string
+import subprocess
 import tarfile
 import types
 from collections.abc import Callable, Iterable
@@ -351,7 +353,7 @@ _zeek_info = None
 
 
 def get_zeek_info() -> ZeekInfo:
-    global _zeek_info
+    global _zeek_info  # noqa: PLW0603
 
     if _zeek_info is None:
         _zeek_info = ZeekInfo(
@@ -364,8 +366,6 @@ def get_zeek_info() -> ZeekInfo:
 def std_encoding(stream: TextIO) -> str:
     if stream.encoding:
         return stream.encoding
-
-    import locale
 
     if locale.getdefaultlocale()[1] is None:
         return "utf-8"
@@ -382,8 +382,6 @@ def get_zeek_version() -> str:
 
     if not zeek_config:
         return ""
-
-    import subprocess
 
     cmd = subprocess.Popen(
         [zeek_config, "--version"],

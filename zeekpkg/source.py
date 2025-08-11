@@ -112,7 +112,7 @@ class Source:
                 pass
 
             for filename in files:
-                if filename == INDEX_FILENAME or filename == LEGACY_INDEX_FILENAME:
+                if filename in {INDEX_FILENAME, LEGACY_INDEX_FILENAME}:
                     rval.append(os.path.join(root, filename))
 
         return sorted(rval)

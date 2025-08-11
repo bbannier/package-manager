@@ -1,3 +1,4 @@
+import json
 import os
 from argparse import ArgumentParser
 from collections.abc import Callable
@@ -6,6 +7,8 @@ from typing import ClassVar
 from docutils import nodes
 from docutils.parsers.rst.directives import flag, unchanged
 from docutils.statemachine import StringList
+from sphinx.util import logging
+from sphinx.util.console import blue
 
 try:
     # Removed as of Sphinx 1.7
@@ -293,8 +296,6 @@ class ArgParseDirective(Directive):
             if len(subcommands_section) > 1:
                 items.append(subcommands_section)
         if os.getenv("INCLUDE_DEBUG_SECTION"):
-            import json
-
             # DEBUG section (non-standard)
             debug_section = nodes.section(
                 "",
@@ -470,8 +471,6 @@ class ArgParseDirective(Directive):
 
 
 def env_get_outdated_hook(app, env, added, changed, removed):
-    from sphinx.util import logging
-
     logger = logging.getLogger(__name__)
 
     rval = set()
@@ -489,8 +488,6 @@ def env_get_outdated_hook(app, env, added, changed, removed):
             rval.add(docname)
 
     for docname in rval:
-        from sphinx.util.console import blue
-
         msg = blue(f"found outdated argparse doc: {docname}")
         logger.info(msg)
 

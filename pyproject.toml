@@ -70,4 +70,5 @@ module = ["zeekpkg", "semantic_version"]
 ignore_missing_imports = true
 
 [tool.ruff.lint]
-select = ["A", "B", "C4", "COM", "F", "I", "ISC", "N", "RUF", "RET", "UP"]
+select = ["A", "B", "C4", "COM", "F", "I", "ISC", "N", "PL", "RUF", "RET", "UP"]
+ignore = ["PLR0912", "PLR0915", "PLR0911", "PLR0913", "PLR2004", "PLW2901"]

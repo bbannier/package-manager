@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from collections import deque
 from urllib.parse import urlparse
 
@@ -440,16 +441,15 @@ class Manager:
                             type(exception).__name__,
                             exception,
                         )
-            else:
-                if path_enabled.exists():
-                    try:
-                        path_enabled.rename(path_disabled)
-                    except OSError as exception:
-                        LOG.error(
-                            "could not disable plugin: %s %s",
-                            type(exception).__name__,
-                            exception,
-                        )
+            elif path_enabled.exists():
+                try:
+                    path_enabled.rename(path_disabled)
+                except OSError as exception:
+                    LOG.error(
+                        "could not disable plugin: %s %s",
+                        type(exception).__name__,
+                        exception,
+                    )
 
     def _read_manifest(self) -> tuple[str, str, str]:
         """Read the manifest file containing the list of installed packages.
@@ -830,8 +830,6 @@ class Manager:
             config file has been copied.  It should be considered temporary,
             so make use of it before doing any further operations on packages.
         """
-        import re
-
         metadata = installed_pkg.package.metadata
         config_files = re.split(r",\s*", metadata.get("config_files", ""))
 
@@ -877,8 +875,6 @@ class Manager:
             The second element is an absolute file system path to where that
             config file is currently installed.
         """
-        import re
-
         metadata = installed_pkg.package.metadata
         config_files = re.split(r",\s*", metadata.get("config_files", ""))
 
@@ -965,8 +961,6 @@ class Manager:
             of the returned list corresponds directly to the order of
             `modified_files`.
         """
-        import time
-
         rval = []
 
         for modified_file in modified_files:
@@ -3187,13 +3181,12 @@ class Manager:
                     )
                     return f'no such branch or version tag: "{version}"'
 
+        elif len(version_tags):
+            version = version_tags[-1]
+            status.tracking_method = TRACKING_METHOD_VERSION
         else:
-            if len(version_tags):
-                version = version_tags[-1]
-                status.tracking_method = TRACKING_METHOD_VERSION
-            else:
-                version = git_default_branch(clone)
-                status.tracking_method = TRACKING_METHOD_BRANCH
+            version = git_default_branch(clone)
+            status.tracking_method = TRACKING_METHOD_BRANCH
 
         status.current_version = version
         git_checkout(clone, version)
@@ -3557,4 +3550,4 @@ def _info_from_clone(
 
 
 def _is_reserved_pkg_name(name: str) -> bool:
-    return name == "zeek" or name == "zkg"
+    return name in {"zeek", "zkg"}
