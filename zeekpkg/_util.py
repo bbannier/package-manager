@@ -303,10 +303,7 @@ def git_remote_urls(repo: git.Repo) -> dict[str, str]:
     return remotes
 
 
-def is_sha1(s: str | None) -> bool:
-    if not s:
-        return False
-
+def is_sha1(s: str) -> bool:
     if len(s) != 40:
         return False
 

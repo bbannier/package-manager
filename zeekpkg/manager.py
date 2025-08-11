@@ -3442,7 +3442,7 @@ def _clone_package(
         git.GitCommandError: if the git repo is invalid
     """
     delete_path(clonepath)
-    shallow = not is_sha1(version)
+    shallow = True if version is None else is_sha1(version)
     return git_clone(package.git_url, clonepath, shallow=shallow, recursive=recursive)
 
 
