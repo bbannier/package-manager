@@ -1126,7 +1126,7 @@ class Manager:
                     try:
                         clone = git_clone(url, clonepath, shallow=True)
                     except git.GitCommandError as error:
-                        LOG.warn(
+                        LOG.warning(
                             "failed to clone %s, skipping aggregation: %s",
                             url,
                             error,
@@ -1144,7 +1144,7 @@ class Manager:
                     try:
                         git_checkout(clone, version)
                     except git.GitCommandError as error:
-                        LOG.warn(
+                        LOG.warning(
                             'failed to checkout branch/version "%s" of %s, '
                             "skipping aggregation: %s",
                             version,
@@ -1165,7 +1165,7 @@ class Manager:
                     )
 
                     if invalid_reason:
-                        LOG.warn(
+                        LOG.warning(
                             "skipping aggregation of %s: bad metadata: %s",
                             url,
                             invalid_reason,
@@ -1265,7 +1265,7 @@ class Manager:
             try:
                 clone.git.fetch("--recurse-submodules=yes")
             except git.GitCommandError as error:
-                LOG.warn(
+                LOG.warning(
                     "failed to fetch package %s: %s",
                     ipkg.package.qualified_name(),
                     error,
@@ -1378,7 +1378,7 @@ class Manager:
                     LOG.debug("removing link %s", link)
                     os.unlink(link)
                 except OSError as err:
-                    LOG.warn("cannot remove link for %s", err)
+                    LOG.warning("cannot remove link for %s", err)
 
         del self.installed_pkgs[pkg_to_remove.name]
         self._write_manifest()
@@ -3176,7 +3176,7 @@ class Manager:
                         os.unlink(old)
                         LOG.debug("removed link %s", old)
                     except Exception:
-                        LOG.warn("failed to remove link %s", old)
+                        LOG.warning("failed to remove link %s", old)
 
 
 def _get_branch_names(clone):

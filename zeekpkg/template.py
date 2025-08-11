@@ -156,7 +156,7 @@ class Template:
                 git_checkout(repo, version)
             except git.GitCommandError as error:
                 msg = f'failed to checkout branch/version "{version}" of template {template}: {error}'
-                LOG.warn(msg)
+                LOG.warning(msg)
                 raise GitError(msg) from error
 
             try:
