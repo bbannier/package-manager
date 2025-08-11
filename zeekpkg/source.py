@@ -38,7 +38,13 @@ class Source:
         clone (git.Repo): The local git clone of the package source.
     """
 
-    def __init__(self, name, clone_path, git_url, version=None):
+    def __init__(
+        self,
+        name: str,
+        clone_path: str,
+        git_url: str,
+        version: str | None = None,
+    ) -> None:
         """Create a package source.
 
         Raises:
@@ -48,7 +54,7 @@ class Source:
         git_url = os.path.expanduser(git_url)
         self.name = name
         self.git_url = git_url
-        self.clone = None
+        self.clone: git.Repo
 
         try:
             self.clone = git.Repo(clone_path)
@@ -76,13 +82,13 @@ class Source:
 
         git_checkout(self.clone, version or git_default_branch(self.clone))
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.git_url
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.git_url
 
-    def package_index_files(self):
+    def package_index_files(self) -> list[str]:
         """Return a list of paths to package index files in the source."""
         rval = []
         visited_dirs = set()
@@ -106,12 +112,12 @@ class Source:
                 pass
 
             for filename in files:
-                if filename == INDEX_FILENAME or filename == LEGACY_INDEX_FILENAME:
+                if filename in {INDEX_FILENAME, LEGACY_INDEX_FILENAME}:
                     rval.append(os.path.join(root, filename))
 
         return sorted(rval)
 
-    def packages(self):
+    def packages(self) -> list[Package]:
         """Return a list of :class:`.package.Package` in the source."""
         rval = []
         # Use raw parser so no value interpolation takes place.
@@ -120,7 +126,7 @@ class Source:
         parser.read(aggregate_file)
 
         for index_file in self.package_index_files():
-            relative_path = index_file[len(self.clone.working_dir) + 1 :]
+            relative_path = index_file[len(str(self.clone.working_dir)) + 1 :]
             directory = os.path.dirname(relative_path)
             lines = []
 

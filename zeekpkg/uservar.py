@@ -4,12 +4,13 @@ by packages that the user can provide in a variety of ways, including
 responses to zkg's input prompting.
 """
 
+import configparser
 import os
 import re
 import readline
 
 
-def slugify(string):
+def slugify(string: str) -> str:
     """Returns file-system-safe, lower-case version of the input string.
 
     Any character sequence outside of ``[a-zA-Z0-9_]+`` gets replaced by a
@@ -19,7 +20,7 @@ def slugify(string):
     return re.sub(r"[^\w]+", "_", string, flags=re.ASCII).lower()
 
 
-def _rlinput(prompt, prefill=""):
+def _rlinput(prompt: str, prefill: str = "") -> str:
     """Variation of input() that supports pre-filling a value."""
     readline.set_startup_hook(lambda: readline.insert_text(prefill))
     try:
@@ -38,28 +39,40 @@ class UserVar:
     default value.
     """
 
-    def __init__(self, name, val=None, default=None, desc=None):
+    def __init__(
+        self,
+        name: str,
+        val: str | None = None,
+        default: str | None = None,
+        desc: str | None = None,
+    ) -> None:
         self._name = name
         self._desc = desc or ""
         self._val = val
         self._default = default if default is not None else val
 
-    def name(self):
+    def name(self) -> str:
         return self._name
 
-    def desc(self):
+    def desc(self) -> str:
         return self._desc
 
-    def set(self, val):
+    def set(self, val: str) -> None:
         self._val = val
 
-    def val(self, fallback=None):
+    def val(self, fallback: str | None = None) -> str | None:
         return self._val if self._val is not None else fallback
 
-    def default(self):
+    def default(self) -> str | None:
         return self._default
 
-    def resolve(self, name, config, user_var_args=None, force=False):
+    def resolve(
+        self,
+        name: str,
+        config: configparser.ConfigParser,
+        user_var_args: list["UserVar"] | None = None,
+        force: bool = False,
+    ) -> str:
         """Populates user variables with updated values and returns them.
 
         This function resolves the variable in the following order:
@@ -89,7 +102,7 @@ class UserVar:
         Raises:
             ValueError: when we couldn't produce a value for the variable
         """
-        val = None
+        val: str | None = None
         source = None
 
         if user_var_args:
@@ -109,6 +122,7 @@ class UserVar:
                 f'"{name}" will use value of "{self._name}" ({self._desc}) from {source}: {val}',
             )
             self._val = val
+            assert val
             return val
 
         if val is None:
@@ -123,12 +137,13 @@ class UserVar:
 
         desc = " (" + self._desc + ")" if self._desc else ""
         print(f'"{name}" requires a "{self._name}" value{desc}: ')
+        assert val
         self._val = _rlinput(self._name + ": ", val)
 
         return self._val
 
     @staticmethod
-    def parse_arg(arg):
+    def parse_arg(arg: str) -> "UserVar":
         """Parser for NAME=VAL format string used in command-line args."""
         try:
             name, val = arg.split("=", 1)
@@ -139,7 +154,7 @@ class UserVar:
             ) from error
 
     @staticmethod
-    def parse_dict(metadata_dict):
+    def parse_dict(metadata_dict: dict[str, str]) -> list["UserVar"] | None:
         """Returns list of UserVars from the metadata's 'user_vars' field.
 
         Args:

@@ -7,9 +7,14 @@ import configparser
 import os
 import re
 import shutil
+from collections.abc import Generator
+from typing import TYPE_CHECKING, Any
 
 import git
 import semantic_version as semver
+
+if TYPE_CHECKING:
+    from zeekpkg import UserVar
 
 from . import (
     LOG,
@@ -63,7 +68,11 @@ class Template:
     """
 
     @staticmethod
-    def load(config, template, version=None):
+    def load(
+        config: configparser.ConfigParser,
+        template: str,
+        version: str | None = None,
+    ) -> "Template":
         """Template loader.
 
         This function instantiates a zeekpkg.template.Template
@@ -104,7 +113,9 @@ class Template:
             try:
                 repo = git.Repo(template)
                 if not repo.is_dirty():
-                    version = repo.head.ref.commit.hexsha[:8]
+                    ref = repo.head.ref
+                    assert hasattr(ref, "commit")
+                    version = ref.commit.hexsha[:8]
             except git.InvalidGitRepositoryError:
                 pass
             templatedir = template
@@ -156,7 +167,7 @@ class Template:
                 git_checkout(repo, version)
             except git.GitCommandError as error:
                 msg = f'failed to checkout branch/version "{version}" of template {template}: {error}'
-                LOG.warn(msg)
+                LOG.warning(msg)
                 raise GitError(msg) from error
 
             try:
@@ -207,10 +218,16 @@ class Template:
             LOG.error(msg)
             raise LoadError(msg)
 
-        return mod.Template(templatedir, mod.TEMPLATE_API_VERSION, version, repo)
+        instance: Template = mod.Template(
+            templatedir,
+            mod.TEMPLATE_API_VERSION,
+            version,
+            repo,
+        )
+        return instance
 
     @staticmethod
-    def is_api_compatible(tmpl_ver):
+    def is_api_compatible(tmpl_ver: str) -> bool:
         """Validate template API compatibility.
 
         Given a semver string describing the API version for which a
@@ -242,7 +259,13 @@ class Template:
         # template's we're buggy, but the difference doesn't affect API.
         return True
 
-    def __init__(self, templatedir, api_version, version=None, repo=None):
+    def __init__(
+        self,
+        templatedir: str,
+        api_version: str,
+        version: str | None = None,
+        repo: git.Repo | None = None,
+    ) -> None:
         """Creates a template.
 
         Template objects start from a local directory, and potentially
@@ -266,10 +289,10 @@ class Template:
         self._api_version = api_version
         self._version = version
         self._repo = repo
-        self._params = {}  # str -> str, set via self.define_param()
-        self._user_vars = []
+        self._params: dict[str, str] = {}  # str -> str, set via self.define_param()
+        self._user_vars: list[UserVar] = []
 
-    def define_user_vars(self):
+    def define_user_vars(self) -> list["UserVar"]:
         """Defines the full set of user vars supported by this template.
 
         This function defines the complete set of user vars supported
@@ -285,7 +308,8 @@ class Template:
         """
         return []
 
-    def apply_user_vars(self, user_vars):
+    @abc.abstractmethod
+    def apply_user_vars(self, user_vars: list["UserVar"]) -> None:
         """Apply the user variables to this template.
 
         Override this by invoking self.define_param() as needed to create
@@ -300,7 +324,8 @@ class Template:
             user_vars (list of zeekpkg.uservar.UserVar): input values for the template.
         """
 
-    def package(self):
+    @abc.abstractmethod
+    def package(self) -> "Package":
         """Provides a package template to instantiate.
 
         If the template provides a Zeek package, return a Package
@@ -309,9 +334,8 @@ class Template:
         Returns:
             zeekpkg.template.Package instance
         """
-        pass
 
-    def features(self):
+    def features(self) -> list["Feature"]:
         """Provides any additional features templates supported.
 
         If the template provides extra features, return each as an
@@ -323,19 +347,19 @@ class Template:
         """
         return []
 
-    def templatedir(self):
+    def templatedir(self) -> str:
         """Returns the path to the template's source tree on disk."""
         return self._templatedir
 
-    def name(self):
+    def name(self) -> str:
         """A name for this template, derived from the repo URL."""
         return name_from_path(self._templatedir)
 
-    def api_version(self):
+    def api_version(self) -> str:
         """The template API version string declared in this instance's module."""
         return self._api_version
 
-    def version(self):
+    def version(self) -> str | None:
         """A version string for the template.
 
         This can be a git tag, branch, commit hash, or None if we're
@@ -343,11 +367,11 @@ class Template:
         """
         return self._version
 
-    def has_repo(self):
+    def has_repo(self) -> bool:
         """Returns True if this template has a git repository, False otherwise."""
         return self._repo is not None
 
-    def version_branch(self):
+    def version_branch(self) -> str | None:
         """Name of the branch the template is on, if any.
 
         Returns branch name if this template version is a branch HEAD, None
@@ -363,7 +387,7 @@ class Template:
 
         return None
 
-    def version_sha(self):
+    def version_sha(self) -> str | None:
         """The git commit hash for this template's version.
 
         Returns None when this template got instantiated without a git repo,
@@ -371,25 +395,27 @@ class Template:
         """
         try:
             if self._repo:
-                return self._repo.head.ref.commit.hexsha
+                ref = self._repo.head.ref
+                assert hasattr(ref, "commit")
+                return str(ref.commit.hexsha)
         except Exception:
             pass
 
         return None
 
-    def define_param(self, name, val):
+    def define_param(self, name: str, val: str) -> None:
         """Defines a parameter of the given name and value."""
         self._params[name] = val
 
-    def lookup_param(self, name, default=""):
+    def lookup_param(self, name: str, default: str = "") -> str:
         """Looks up a parameter, falling back to the given default."""
         return self._params.get(name, default)
 
-    def params(self):
+    def params(self) -> dict[str, str]:
         """Returns current str->str template parameter dict."""
         return self._params
 
-    def info(self):
+    def info(self) -> dict[str, Any]:
         """Returns a dict capturing information about this template
 
         This is usable when rendered as JSON, and also serves as the
@@ -397,7 +423,7 @@ class Template:
         """
         # In the future a template may not provide a full package,
         # only features overlaid in combination with another template.
-        res = {
+        res: dict[str, Any] = {
             "api_version": self._api_version,
             "provides_package": False,
         }
@@ -458,13 +484,13 @@ class Template:
         res["features"] = sorted(feature_names)
         return res
 
-    def _set_user_vars(self, user_vars):
+    def _set_user_vars(self, user_vars: list["UserVar"]) -> None:
         """Provides resolved user vars for the template. Used internally."""
         self._params = {}
         self._user_vars = user_vars
         self.apply_user_vars(user_vars)
 
-    def _get_user_vars(self):
+    def _get_user_vars(self) -> list["UserVar"]:
         """Accessor to resolved user vars. Used internally."""
         return self._user_vars
 
@@ -472,20 +498,19 @@ class Template:
 class _Content(metaclass=abc.ABCMeta):
     """Common functionality for all template content."""
 
-    def __init__(self):
-        self._features = []
-        self._packagedir = None
+    def __init__(self) -> None:
+        self._features: list[Feature] = []
+        self._packagedir: str | None = None
 
     @abc.abstractmethod
-    def contentdir(self):
+    def contentdir(self) -> str:
         """Subdirectory providing this content in the template tree.
 
         Returns:
             str: relative path to the content directory
         """
-        pass
 
-    def needed_user_vars(self):
+    def needed_user_vars(self) -> list[str]:
         """Returns a list of user vars names required by this content.
 
         Use this function to declare which of the user vars defined by
@@ -498,10 +523,10 @@ class _Content(metaclass=abc.ABCMeta):
         """
         return []
 
-    def add_feature(self, feature):
+    def add_feature(self, feature: "Feature") -> None:
         self._features.append(feature)
 
-    def do_validate(self, tmpl):
+    def do_validate(self, tmpl: Template) -> None:
         """Main driver for validation of a template's configuration.
 
         zkg calls this internally as part of template validation.
@@ -513,7 +538,7 @@ class _Content(metaclass=abc.ABCMeta):
             feature.validate(tmpl)
 
     @abc.abstractmethod
-    def validate(self, tmpl):
+    def validate(self, tmpl: Template) -> None:
         """Validation of template configuration for this component.
 
         Override this in your template's code in order to check
@@ -529,9 +554,13 @@ class _Content(metaclass=abc.ABCMeta):
             zeekpkg.template.InputError when failing validation.
 
         """
-        pass
 
-    def do_instantiate(self, tmpl, packagedir, use_force=False):
+    def do_instantiate(
+        self,
+        tmpl: Template,
+        packagedir: str,
+        use_force: bool = False,
+    ) -> None:
         """Main driver for instantiating template content.
 
         zkg calls this internally as part of template instantiation.
@@ -553,7 +582,7 @@ class _Content(metaclass=abc.ABCMeta):
         for feature in self._features:
             feature.do_instantiate(tmpl, packagedir, use_force=use_force)
 
-    def instantiate(self, tmpl):
+    def instantiate(self, tmpl: Template) -> None:
         """Instantiation of this template component.
 
         This substitutes parameters in the template material and
@@ -568,7 +597,14 @@ class _Content(metaclass=abc.ABCMeta):
             else:
                 self.instantiate_file(tmpl, orig_file, path_name, file_name, content)
 
-    def instantiate_file(self, tmpl, orig_file, path_name, file_name, content):
+    def instantiate_file(
+        self,
+        tmpl: Template,
+        orig_file: str,
+        path_name: str,
+        file_name: str,
+        content: str | bytes,
+    ) -> None:
         """Instantiate a regular file in the template.
 
         This gets invoked by instantiate() as it traverses the
@@ -594,18 +630,27 @@ class _Content(metaclass=abc.ABCMeta):
             content (str or bytes): the resulting content for the file.
 
         """
+        assert self._packagedir
         out_dir = os.path.join(self._packagedir, path_name)
         out_file = os.path.join(out_dir, file_name)
         os.makedirs(out_dir, exist_ok=True)
 
         try:
             with open(out_file, "wb") as hdl:
+                assert isinstance(content, bytes)
                 hdl.write(content)
             shutil.copymode(orig_file, out_file)
         except OSError as error:
             LOG.warning('I/O error while instantiating "%s": %s', out_file, error)
 
-    def instantiate_symlink(self, tmpl, orig_file, path_name, file_name, target):
+    def instantiate_symlink(
+        self,
+        tmpl: Template,
+        orig_file: str,
+        path_name: str,
+        file_name: str,
+        target: str | bytes,
+    ) -> None:
         """Instantiate a symbolic link in the template.
 
         This gets invoked by instantiate() as it traverses the
@@ -629,6 +674,7 @@ class _Content(metaclass=abc.ABCMeta):
 
             target (str): the location the symlink points to.
         """
+        assert self._packagedir
         out_dir = os.path.join(self._packagedir, path_name)
         out_file = os.path.join(out_dir, file_name)
         os.makedirs(out_dir, exist_ok=True)
@@ -639,7 +685,7 @@ class _Content(metaclass=abc.ABCMeta):
         except OSError as error:
             LOG.warning('OS error while creating symlink "%s": %s', out_file, error)
 
-    def _walk(self, tmpl):
+    def _walk(self, tmpl: Template) -> Generator[tuple[str, str, str, str | bytes]]:
         """Generator for instantiating template content.
 
         This walks over the template source tree, yielding for every
@@ -653,12 +699,16 @@ class _Content(metaclass=abc.ABCMeta):
         """
         prefix = os.path.join(tmpl.templatedir(), self.contentdir())
         for root, _, files in os.walk(prefix):
+            assert isinstance(root, str)
             for fname in files:
+                assert isinstance(fname, str)
                 in_file = root + os.sep + fname
 
                 # Substitute directory and file names
                 out_path = self._replace(tmpl, root[len(prefix) + 1 :])
+                assert isinstance(out_path, str)
                 out_file = self._replace(tmpl, fname)
+                assert isinstance(out_file, str)
 
                 if os.path.islink(in_file):
                     out_content = self._replace(tmpl, os.readlink(in_file))
@@ -673,7 +723,7 @@ class _Content(metaclass=abc.ABCMeta):
 
                 yield in_file, out_path, out_file, out_content
 
-    def _replace(self, tmpl, content):
+    def _replace(self, tmpl: Template, content: str | bytes) -> str | bytes:
         """Helper for content substitution.
 
         Args:
@@ -687,9 +737,11 @@ class _Content(metaclass=abc.ABCMeta):
         for name, val in tmpl.params().items():
             pat = "@" + name + "@"
             if not isinstance(content, str):
-                pat = bytes(pat, "utf-8")
-                val = bytes(val, "utf-8")
-            content = re.sub(pat, val, content, flags=re.IGNORECASE)
+                pat_b = bytes(pat, "utf-8")
+                val_b = bytes(val, "utf-8")
+                content = re.sub(pat_b, val_b, content, flags=re.IGNORECASE)
+            else:
+                content = re.sub(pat, val, content, flags=re.IGNORECASE)
 
         return content
 
@@ -702,23 +754,29 @@ class Package(_Content):
     to implement contentdir().
     """
 
-    def do_instantiate(self, tmpl, packagedir, use_force=False):
+    def do_instantiate(
+        self,
+        tmpl: Template,
+        packagedir: str,
+        use_force: bool = False,
+    ) -> None:
         self._prepare_packagedir(packagedir)
         super().do_instantiate(tmpl, packagedir, use_force)
         self._update_metadata(tmpl)
         self._git_init(tmpl)
 
-    def _prepare_packagedir(self, packagedir):
+    def _prepare_packagedir(self, packagedir: str) -> None:
         os.makedirs(packagedir, exist_ok=True)
 
-    def _update_metadata(self, tmpl):
+    def _update_metadata(self, tmpl: Template) -> None:
         """Updates the package's zkg.meta with template information.
 
         This information allows re-running template instantiation with
         identical inputs at a later time.
         """
         config = configparser.ConfigParser(delimiters="=")
-        config.optionxform = str
+        config.optionxform = str  # type: ignore
+        assert self._packagedir
         manifest_file = os.path.join(self._packagedir, METADATA_FILENAME)
 
         # Best-effort: if the template populated the file, adopt the
@@ -740,7 +798,9 @@ class Package(_Content):
             # the exact commit.
             if tmpl.version_branch():
                 config.set(section, "version", tmpl.version_branch())
-                config.set(section, "commit", tmpl.version_sha()[:8])
+                sha = tmpl.version_sha()
+                assert sha
+                config.set(section, "commit", sha[:8])
             else:
                 config.set(section, "version", tmpl.version())
         else:
@@ -763,7 +823,7 @@ class Package(_Content):
         with open(manifest_file, "w") as hdl:
             config.write(hdl)
 
-    def _git_init(self, tmpl):
+    def _git_init(self, tmpl: Template) -> None:
         """Initialize git repo and commit instantiated content."""
         repo = git.Repo.init(self._packagedir)
         for fname in repo.untracked_files:
@@ -808,6 +868,6 @@ class Feature(_Content):
     to implement contentdir().
     """
 
-    def name(self):
+    def name(self) -> str:
         """A name for this feature. Defaults to its content directory."""
         return self.contentdir() or "unnamed"

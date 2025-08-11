@@ -11,8 +11,21 @@ repos:
   - id: check-yaml
   - id: check-added-large-files
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.11.7
+  rev: v0.12.8
   hooks:
     - id: ruff
       args: [--fix]
     - id: ruff-format
+
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v1.17.1
+  hooks:
+  - id: mypy
+    args: [--strict]
+    additional_dependencies:
+      - "argcomplete>=3.6.2"
+      - "GitPython>=3.1.43"
+      - "semantic_version>=2.10.0"
+      - "types-docutils>=0.21.0.20250809"
+      - "types-setuptools>=80.9.0.20250809"
+    exclude: "doc/.*"

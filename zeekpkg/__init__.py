@@ -9,10 +9,10 @@ may be added in order to help log/debug applications.
 
 import logging
 
-__version__ = "3.1.0"
+__version__ = "3.1.0-7"
 __all__ = ["manager", "package", "source", "template", "uservar"]  # noqa: F405
 
-LOG = logging.getLogger(__name__)
+LOG: logging.Logger = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
 
 from .manager import *  # noqa: F403

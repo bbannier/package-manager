@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from collections import deque
 from urllib.parse import urlparse
 
@@ -76,8 +77,9 @@ from .uservar import (
 
 
 class Stage:
-    def __init__(self, manager, state_dir=None):
+    def __init__(self, manager: "Manager", state_dir: str | None = None) -> None:
         self.manager = manager
+        self.state_dir: str | None
 
         if state_dir:
             self.state_dir = state_dir
@@ -94,7 +96,7 @@ class Stage:
             self.plugin_dir = manager.plugin_dir
             self.bin_dir = manager.bin_dir
 
-    def populate(self):
+    def populate(self) -> None:
         # If we're staging to a temporary location, blow anything existing there
         # away first.
         if self.state_dir:
@@ -118,7 +120,7 @@ class Stage:
                         continue
                     make_symlink(entry.path, os.path.join(self.clone_dir, entry.name))
 
-    def get_subprocess_env(self):
+    def get_subprocess_env(self) -> tuple[dict[str, str] | None, str]:
         zeekpath = os.environ.get("ZEEKPATH")
         pluginpath = os.environ.get("ZEEK_PLUGIN_PATH")
 
@@ -133,6 +135,7 @@ class Stage:
                     bufsize=1,
                     universal_newlines=True,
                 )
+                assert cmd.stdout
                 line1 = read_zeek_config_line(cmd.stdout)
                 line2 = read_zeek_config_line(cmd.stdout)
 
@@ -234,13 +237,13 @@ class Manager:
 
     def __init__(
         self,
-        state_dir,
-        script_dir,
-        plugin_dir,
-        zeek_dist="",
-        user_vars=None,
-        bin_dir="",
-    ):
+        state_dir: str,
+        script_dir: str,
+        plugin_dir: str,
+        zeek_dist: str = "",
+        user_vars: dict[str, str] | None = None,
+        bin_dir: str = "",
+    ) -> None:
         """Creates a package manager instance.
 
         Args:
@@ -264,9 +267,11 @@ class Manager:
             IOError: when a package manager state file can't be created
         """
         LOG.debug("init Manager version %s", __version__)
-        self.sources = {}
-        self.installed_pkgs = {}
-        self._builtin_packages = None  # Cached Zeek built-in packages.
+        self.sources: dict[str, Source] = {}
+        self.installed_pkgs: dict[str, InstalledPackage] = {}
+        self._builtin_packages: list[PackageInfo] | None = (
+            None  # Cached Zeek built-in packages.
+        )
         self._builtin_packages_discovered = False  # Flag if discovery even worked.
         self.zeek_dist = zeek_dist
         self.state_dir = state_dir
@@ -303,6 +308,7 @@ class Manager:
 
         # Place all Zeek built-in packages into installed packages.
         for info in self.discover_builtin_packages():
+            assert info.status
             self.installed_pkgs[info.package.name] = InstalledPackage(
                 package=info.package,
                 status=info.status,
@@ -370,7 +376,7 @@ class Manager:
         self._write_autoloader()
         make_symlink("packages.zeek", self.autoload_package)
 
-    def _write_autoloader(self):
+    def _write_autoloader(self) -> None:
         """Write the :file:`packages.zeek` loader script.
 
         Raises:
@@ -388,7 +394,7 @@ class Manager:
 
             f.write(content)
 
-    def _write_plugin_magic(self, ipkg):
+    def _write_plugin_magic(self, ipkg: InstalledPackage) -> None:
         """Enables/disables any Zeek plugin included with a package.
 
         Zeek's plugin code scans its plugin directories for
@@ -423,6 +429,7 @@ class Manager:
         for path_enabled, path_disabled in zip(
             magic_paths_enabled,
             magic_paths_disabled,
+            strict=False,
         ):
             if ipkg.status.is_loaded:
                 if path_disabled.exists():
@@ -434,22 +441,21 @@ class Manager:
                             type(exception).__name__,
                             exception,
                         )
-            else:
-                if path_enabled.exists():
-                    try:
-                        path_enabled.rename(path_disabled)
-                    except OSError as exception:
-                        LOG.error(
-                            "could not disable plugin: %s %s",
-                            type(exception).__name__,
-                            exception,
-                        )
+            elif path_enabled.exists():
+                try:
+                    path_enabled.rename(path_disabled)
+                except OSError as exception:
+                    LOG.error(
+                        "could not disable plugin: %s %s",
+                        type(exception).__name__,
+                        exception,
+                    )
 
-    def _read_manifest(self):
+    def _read_manifest(self) -> tuple[str, str, str]:
         """Read the manifest file containing the list of installed packages.
 
         Returns:
-            tuple: (previous script_dir, previous plugin_dir)
+            tuple: (previous script_dir, previous plugin_dir, previous bin_dir)
 
         Raises:
             IOError: when the manifest file can't be read
@@ -475,7 +481,7 @@ class Manager:
 
             return data["script_dir"], data["plugin_dir"], data.get("bin_dir", None)
 
-    def _write_manifest(self):
+    def _write_manifest(self) -> None:
         """Writes the manifest file containing the list of installed packages.
 
         Raises:
@@ -505,7 +511,7 @@ class Manager:
         with open(self.manifest, "w") as f:
             json.dump(data, f, indent=2, sort_keys=True)
 
-    def zeekpath(self):
+    def zeekpath(self) -> str:
         """Return the path where installed package scripts are located.
 
         This path can be added to :envvar:`ZEEKPATH` for interoperability with
@@ -513,7 +519,7 @@ class Manager:
         """
         return os.path.dirname(self.script_dir)
 
-    def zeek_plugin_path(self):
+    def zeek_plugin_path(self) -> str:
         """Return the path where installed package plugins are located.
 
         This path can be added to :envvar:`ZEEK_PLUGIN_PATH` for
@@ -521,7 +527,7 @@ class Manager:
         """
         return os.path.dirname(self.plugin_dir)
 
-    def add_source(self, name, git_url):
+    def add_source(self, name: str, git_url: str) -> str:
         """Add a git repository that acts as a source of packages.
 
         Args:
@@ -542,7 +548,7 @@ class Manager:
 
             if existing_source.git_url == git_url:
                 LOG.debug('duplicate source "%s"', name)
-                return True
+                return ""
 
             return (
                 f"source already exists with different URL: {existing_source.git_url}"
@@ -588,7 +594,7 @@ class Manager:
 
         return ""
 
-    def source_packages(self):
+    def source_packages(self) -> list[Package]:
         """Return a list of :class:`.package.Package` within all sources."""
         rval = []
 
@@ -597,7 +603,7 @@ class Manager:
 
         return rval
 
-    def discover_builtin_packages(self):
+    def discover_builtin_packages(self) -> list[PackageInfo]:
         """
         Discover packages included in Zeek for dependency resolution.
 
@@ -672,7 +678,7 @@ class Manager:
 
         return self._builtin_packages
 
-    def find_builtin_package(self, pkg_path):
+    def find_builtin_package(self, pkg_path: str) -> PackageInfo | None:
         """
         Find a builtin plugin that matches ``pkg_path``.
 
@@ -686,16 +692,16 @@ class Manager:
         """
         pkg_name = name_from_path(pkg_path)
         for info in self.discover_builtin_packages():
-            if info.package.matches_path(pkg_name):
+            if info.package and info.package.matches_path(pkg_name):
                 return info
 
         return None
 
-    def installed_packages(self):
+    def installed_packages(self) -> list[InstalledPackage]:
         """Return list of :class:`.package.InstalledPackage`."""
         return [ipkg for _, ipkg in sorted(self.installed_pkgs.items())]
 
-    def installed_package_dependencies(self):
+    def installed_package_dependencies(self) -> dict[str, dict[str, str] | None]:
         """Return dict of 'package' -> dict of 'dependency' -> 'version'.
 
         Package-name / dependency-name / and version-requirement values are
@@ -706,7 +712,7 @@ class Manager:
             for name, ipkg in self.installed_pkgs.items()
         }
 
-    def loaded_packages(self):
+    def loaded_packages(self) -> list[InstalledPackage]:
         """Return list of loaded :class:`.package.InstalledPackage`."""
         rval = []
 
@@ -716,7 +722,7 @@ class Manager:
 
         return rval
 
-    def package_build_log(self, pkg_path):
+    def package_build_log(self, pkg_path: str) -> str:
         """Return the path to the package manager's build log for a package.
 
         Args:
@@ -729,7 +735,7 @@ class Manager:
         name = name_from_path(pkg_path)
         return os.path.join(self.log_dir, f"{name}-build.log")
 
-    def match_source_packages(self, pkg_path):
+    def match_source_packages(self, pkg_path: str) -> list[Package]:
         """Return a list of :class:`.package.Package` that match a given path.
 
         Args:
@@ -748,7 +754,7 @@ class Manager:
 
         return rval
 
-    def find_installed_package(self, pkg_path):
+    def find_installed_package(self, pkg_path: str) -> InstalledPackage | None:
         """Return an :class:`.package.InstalledPackage` if one matches the name.
 
         Args:
@@ -761,7 +767,10 @@ class Manager:
         pkg_name = name_from_path(pkg_path)
         return self.installed_pkgs.get(pkg_name)
 
-    def get_installed_package_dependencies(self, pkg_path):
+    def get_installed_package_dependencies(
+        self,
+        pkg_path: str,
+    ) -> dict[str, str] | None:
         """Return a set of tuples of dependent package names and their version
         number if pkg_path is an installed package.
 
@@ -779,7 +788,7 @@ class Manager:
 
         return None
 
-    def has_scripts(self, installed_pkg):
+    def has_scripts(self, installed_pkg: InstalledPackage) -> bool:
         """Return whether a :class:`.package.InstalledPackage` installed scripts.
 
         Args:
@@ -791,7 +800,7 @@ class Manager:
         """
         return os.path.exists(os.path.join(self.script_dir, installed_pkg.package.name))
 
-    def has_plugin(self, installed_pkg):
+    def has_plugin(self, installed_pkg: InstalledPackage) -> bool:
         """Return whether a :class:`.package.InstalledPackage` installed a plugin.
 
         Args:
@@ -803,7 +812,10 @@ class Manager:
         """
         return os.path.exists(os.path.join(self.plugin_dir, installed_pkg.package.name))
 
-    def save_temporary_config_files(self, installed_pkg):
+    def save_temporary_config_files(
+        self,
+        installed_pkg: InstalledPackage,
+    ) -> list[tuple[str, str]]:
         """Return a list of temporary package config file backups.
 
         Args:
@@ -818,8 +830,6 @@ class Manager:
             config file has been copied.  It should be considered temporary,
             so make use of it before doing any further operations on packages.
         """
-        import re
-
         metadata = installed_pkg.package.metadata
         config_files = re.split(r",\s*", metadata.get("config_files", ""))
 
@@ -848,7 +858,10 @@ class Manager:
 
         return rval
 
-    def modified_config_files(self, installed_pkg):
+    def modified_config_files(
+        self,
+        installed_pkg: InstalledPackage,
+    ) -> list[tuple[str, str]]:
         """Return a list of package config files that the user has modified.
 
         Args:
@@ -862,8 +875,6 @@ class Manager:
             The second element is an absolute file system path to where that
             config file is currently installed.
         """
-        import re
-
         metadata = installed_pkg.package.metadata
         config_files = re.split(r",\s*", metadata.get("config_files", ""))
 
@@ -932,7 +943,11 @@ class Manager:
 
         return rval
 
-    def backup_modified_files(self, backup_subdir, modified_files):
+    def backup_modified_files(
+        self,
+        backup_subdir: str,
+        modified_files: list[tuple[str, str]],
+    ) -> list[str]:
         """Creates backups of modified config files
 
         Args:
@@ -946,8 +961,6 @@ class Manager:
             of the returned list corresponds directly to the order of
             `modified_files`.
         """
-        import time
-
         rval = []
 
         for modified_file in modified_files:
@@ -979,11 +992,19 @@ class Manager:
                 the failure.
         """
 
-        def __init__(self, refresh_error="", package_issues=None):
+        def __init__(
+            self,
+            refresh_error: str = "",
+            package_issues: list[tuple[str, str]] | None = None,
+        ) -> None:
             self.refresh_error = refresh_error
             self.package_issues = package_issues if package_issues else []
 
-    def aggregate_source(self, name, push=False):
+    def aggregate_source(
+        self,
+        name: str,
+        push: bool = False,
+    ) -> SourceAggregationResults:
         """Pull latest git info from a package source and aggregate metadata.
 
         This is like calling :meth:`refresh_source()` with the *aggregate*
@@ -1009,7 +1030,12 @@ class Manager:
         """
         return self._refresh_source(name, True, push)
 
-    def refresh_source(self, name, aggregate=False, push=False):
+    def refresh_source(
+        self,
+        name: str,
+        aggregate: bool = False,
+        push: bool = False,
+    ) -> str:
         """Pull latest git information from a package source.
 
         This makes the latest pre-aggregated package metadata available or
@@ -1038,7 +1064,12 @@ class Manager:
         res = self._refresh_source(name, aggregate, push)
         return res.refresh_error
 
-    def _refresh_source(self, name, aggregate=False, push=False):
+    def _refresh_source(
+        self,
+        name: str,
+        aggregate: bool = False,
+        push: bool = False,
+    ) -> SourceAggregationResults:
         """Used by :meth:`refresh_source()` and :meth:`aggregate_source()`."""
         if name not in self.sources:
             return self.SourceAggregationResults("source name does not exist")
@@ -1125,7 +1156,7 @@ class Manager:
                     try:
                         clone = git_clone(url, clonepath, shallow=True)
                     except git.GitCommandError as error:
-                        LOG.warn(
+                        LOG.warning(
                             "failed to clone %s, skipping aggregation: %s",
                             url,
                             error,
@@ -1143,7 +1174,7 @@ class Manager:
                     try:
                         git_checkout(clone, version)
                     except git.GitCommandError as error:
-                        LOG.warn(
+                        LOG.warning(
                             'failed to checkout branch/version "%s" of %s, '
                             "skipping aggregation: %s",
                             version,
@@ -1156,7 +1187,7 @@ class Manager:
                         aggregation_issues.append((url, msg))
                         continue
 
-                    metadata_file = _pick_metadata_file(clone.working_dir)
+                    metadata_file = _pick_metadata_file(str(clone.working_dir))
                     metadata_parser = configparser.ConfigParser(interpolation=None)
                     invalid_reason = _parse_package_metadata(
                         metadata_parser,
@@ -1164,7 +1195,7 @@ class Manager:
                     )
 
                     if invalid_reason:
-                        LOG.warn(
+                        LOG.warning(
                             "skipping aggregation of %s: bad metadata: %s",
                             url,
                             invalid_reason,
@@ -1240,7 +1271,7 @@ class Manager:
 
         return self.SourceAggregationResults("", aggregation_issues)
 
-    def refresh_installed_packages(self):
+    def refresh_installed_packages(self) -> None:
         """Fetch latest git information for installed packages.
 
         This retrieves information about outdated packages, but does
@@ -1264,12 +1295,14 @@ class Manager:
             try:
                 clone.git.fetch("--recurse-submodules=yes")
             except git.GitCommandError as error:
-                LOG.warn(
+                LOG.warning(
                     "failed to fetch package %s: %s",
                     ipkg.package.qualified_name(),
                     error,
                 )
 
+            assert ipkg.status.current_version
+            assert ipkg.status.tracking_method
             ipkg.status.is_outdated = _is_clone_outdated(
                 clone,
                 ipkg.status.current_version,
@@ -1278,7 +1311,7 @@ class Manager:
 
         self._write_manifest()
 
-    def upgrade(self, pkg_path):
+    def upgrade(self, pkg_path: str) -> str:
         """Upgrade a package to the latest available version.
 
         Args:
@@ -1320,6 +1353,7 @@ class Manager:
 
         if ipkg.status.tracking_method == TRACKING_METHOD_BRANCH:
             git_pull(clone)
+            assert ipkg.status.current_version
             return self._install(ipkg.package, ipkg.status.current_version)
 
         if ipkg.status.tracking_method == TRACKING_METHOD_COMMIT:
@@ -1329,7 +1363,7 @@ class Manager:
 
         raise NotImplementedError
 
-    def remove(self, pkg_path):
+    def remove(self, pkg_path: str) -> bool:
         """Remove an installed package.
 
         Args:
@@ -1377,7 +1411,7 @@ class Manager:
                     LOG.debug("removing link %s", link)
                     os.unlink(link)
                 except OSError as err:
-                    LOG.warn("cannot remove link for %s", err)
+                    LOG.warning("cannot remove link for %s", err)
 
         del self.installed_pkgs[pkg_to_remove.name]
         self._write_manifest()
@@ -1385,7 +1419,7 @@ class Manager:
         LOG.debug('removed "%s"', pkg_path)
         return True
 
-    def pin(self, pkg_path):
+    def pin(self, pkg_path: str) -> InstalledPackage | None:
         """Pin a currently installed package to the currently installed version.
 
         Pinned packages are never upgraded when calling :meth:`upgrade()`.
@@ -1421,7 +1455,7 @@ class Manager:
         LOG.debug('pinned "%s"', pkg_path)
         return ipkg
 
-    def unpin(self, pkg_path):
+    def unpin(self, pkg_path: str) -> InstalledPackage | None:
         """Unpin a currently installed package and allow it to be upgraded.
 
         Args:
@@ -1455,7 +1489,7 @@ class Manager:
         LOG.debug('unpinned "%s"', pkg_path)
         return ipkg
 
-    def load(self, pkg_path):
+    def load(self, pkg_path: str) -> str:
         """Mark an installed package as being "loaded".
 
         The collection of "loaded" packages is a convenient way for Zeek to more
@@ -1508,7 +1542,7 @@ class Manager:
         LOG.debug('loaded "%s"', pkg_path)
         return ""
 
-    def loaded_package_states(self):
+    def loaded_package_states(self) -> dict[str, bool]:
         """Save "loaded" state for all installed packages.
 
         Returns:
@@ -1518,7 +1552,7 @@ class Manager:
             name: ipkg.status.is_loaded for name, ipkg in self.installed_pkgs.items()
         }
 
-    def restore_loaded_package_states(self, saved_state):
+    def restore_loaded_package_states(self, saved_state: dict[str, bool]) -> None:
         """Restores state for installed packages.
 
         Args:
@@ -1536,7 +1570,11 @@ class Manager:
         self._write_autoloader()
         self._write_manifest()
 
-    def load_with_dependencies(self, pkg_name, visited=None):
+    def load_with_dependencies(
+        self,
+        pkg_name: str,
+        visited: set[str] | None = None,
+    ) -> list[tuple[str, str]]:
         """Mark dependent (but previously installed) packages as being "loaded".
 
         Args:
@@ -1566,18 +1604,21 @@ class Manager:
         retval = []
         visited.add(pkg_name)
 
-        for pkg in self.get_installed_package_dependencies(pkg_name):
-            if _is_reserved_pkg_name(pkg):
-                continue
+        if installed_package_dependencies := self.get_installed_package_dependencies(
+            pkg_name,
+        ):
+            for pkg in installed_package_dependencies:
+                if _is_reserved_pkg_name(pkg):
+                    continue
 
-            if pkg in visited:
-                continue
+                if pkg in visited:
+                    continue
 
-            retval += self.load_with_dependencies(pkg, visited)
+                retval += self.load_with_dependencies(pkg, visited)
 
         return retval
 
-    def list_depender_pkgs(self, pkg_path):
+    def list_depender_pkgs(self, pkg_path: str) -> list[str]:
         """List of depender packages.
 
         If C depends on B and B depends on A, we represent the dependency
@@ -1603,27 +1644,27 @@ class Manager:
         Returns:
             list: list of depender packages.
         """
-        depender_packages, pkg_name = set(), name_from_path(pkg_path)
+        depender_packages: set[str] = set()
+        pkg_name = name_from_path(pkg_path)
         queue = deque([pkg_name])
-        pkg_dependencies = self.installed_package_dependencies()
+        if pkg_dependencies := self.installed_package_dependencies():
+            while queue:
+                item = queue.popleft()
 
-        while queue:
-            item = queue.popleft()
+                for _pkg_name, pkg_dependees in pkg_dependencies.items():
+                    if not pkg_dependees:
+                        continue
+                    if item in pkg_dependees:
+                        # check if there is a cyclic dependency
+                        if _pkg_name == pkg_name:
+                            return sorted([*list(depender_packages), pkg_name])
 
-            for _pkg_name in pkg_dependencies:
-                pkg_dependees = set(pkg_dependencies.get(_pkg_name))
-
-                if item in pkg_dependees:
-                    # check if there is a cyclic dependency
-                    if _pkg_name == pkg_name:
-                        return sorted([*list(depender_packages), [pkg_name]])
-
-                    queue.append(_pkg_name)
-                    depender_packages.add(_pkg_name)
+                        queue.append(_pkg_name)
+                        depender_packages.add(_pkg_name)
 
         return sorted(depender_packages)
 
-    def unload_with_unused_dependers(self, pkg_name):
+    def unload_with_unused_dependers(self, pkg_name: str) -> list[tuple[str, str]]:
         """Unmark dependent (but previously installed packages) as being "loaded".
 
         Args:
@@ -1638,7 +1679,7 @@ class Manager:
             IOError: if the loader script or manifest can't be written
         """
 
-        def _has_all_dependers_unloaded(item, dependers):
+        def _has_all_dependers_unloaded(dependers: list[str]) -> bool:
             for depender in dependers:
                 ipkg = self.find_installed_package(depender)
                 if ipkg and ipkg.status.is_loaded:
@@ -1650,21 +1691,20 @@ class Manager:
 
         while queue:
             item = queue.popleft()
-            deps = self.get_installed_package_dependencies(item)
+            if deps := self.get_installed_package_dependencies(item):
+                for pkg in deps:
+                    if _is_reserved_pkg_name(pkg):
+                        continue
 
-            for pkg in deps:
-                if _is_reserved_pkg_name(pkg):
-                    continue
+                    ipkg = self.find_installed_package(pkg)
+                    # it is possible that this dependency has been removed via zkg
 
-                ipkg = self.find_installed_package(pkg)
-                # it is possible that this dependency has been removed via zkg
+                    if not ipkg:
+                        errors.append((pkg, "Package not installed."))
+                        return errors
 
-                if not ipkg:
-                    errors.append((pkg, "Package not installed."))
-                    return errors
-
-                if ipkg.status.is_loaded:
-                    queue.append(pkg)
+                    if ipkg.status.is_loaded:
+                        queue.append(pkg)
 
             ipkg = self.find_installed_package(item)
 
@@ -1691,7 +1731,7 @@ class Manager:
                     continue
 
                 # check if all dependers are unloaded
-                if _has_all_dependers_unloaded(item, dep_packages):
+                if _has_all_dependers_unloaded(dep_packages):
                     self.unload(item)
                     errors.append((item, ""))
                     continue
@@ -1714,7 +1754,7 @@ class Manager:
 
         return errors
 
-    def unload(self, pkg_path):
+    def unload(self, pkg_path: str) -> bool:
         """Unmark an installed package as being "loaded".
 
         The collection of "loaded" packages is a convenient way for Zeek to more
@@ -1752,7 +1792,10 @@ class Manager:
         LOG.debug('unloaded "%s"', pkg_path)
         return True
 
-    def bundle_info(self, bundle_file):
+    def bundle_info(
+        self,
+        bundle_file: str,
+    ) -> tuple[str, list[tuple[str, str, PackageInfo]]]:
         """Retrieves information on all packages contained in a bundle.
 
         Args:
@@ -1772,7 +1815,7 @@ class Manager:
         bundle_dir = os.path.join(self.scratch_dir, "bundle")
         delete_path(bundle_dir)
         make_dir(bundle_dir)
-        infos = []
+        infos: list[tuple[str, str, PackageInfo]] = []
 
         try:
             safe_tarfile_extractall(bundle_file, bundle_dir)
@@ -1781,7 +1824,7 @@ class Manager:
 
         manifest_file = os.path.join(bundle_dir, "manifest.txt")
         config = configparser.ConfigParser(delimiters="=")
-        config.optionxform = str
+        config.optionxform = str  # type: ignore
 
         if not config.read(manifest_file):
             return ("invalid bundle: no manifest file", infos)
@@ -1804,7 +1847,13 @@ class Manager:
 
         return ("", infos)
 
-    def info(self, pkg_path, version="", prefer_installed=True, update_submodules=True):
+    def info(
+        self,
+        pkg_path: str,
+        version: str | None = "",
+        prefer_installed: bool = True,
+        update_submodules: bool = True,
+    ) -> PackageInfo:
         """Retrieves information about a package.
 
         Args:
@@ -1848,6 +1897,7 @@ class Manager:
 
         ipkg = self.find_installed_package(pkg_path)
 
+        status: PackageStatus | None = None
         if prefer_installed and ipkg:
             status = ipkg.status
             pkg_name = ipkg.package.name
@@ -1890,7 +1940,7 @@ class Manager:
                 f"try a more specific name from: {matches_string}"
             )
 
-            return PackageInfo(invalid_reason=reason, status=status)
+            raise LookupError(reason)
 
         package = matches[0]
 
@@ -1901,7 +1951,13 @@ class Manager:
             reason = "git repository is either invalid or unreachable"
             return PackageInfo(package=package, invalid_reason=reason, status=status)
 
-    def _info(self, package, status, version, update_submodules):
+    def _info(
+        self,
+        package: Package,
+        status: PackageStatus | None,
+        version: str | None,
+        update_submodules: bool,
+    ) -> PackageInfo:
         """Retrieves information about a package.
 
         Returns:
@@ -1929,7 +1985,7 @@ class Manager:
         LOG.debug('checked out "%s", branch/version "%s"', package, version)
         return _info_from_clone(clone, package, status, version)
 
-    def package_versions(self, installed_package):
+    def package_versions(self, installed_package: InstalledPackage) -> list[str]:
         """Returns a list of version number tags available for a package.
 
         Args:
@@ -1940,17 +1996,18 @@ class Manager:
             list of str: the version number tags.
         """
         name = installed_package.package.name
+        assert name
         clonepath = os.path.join(self.package_clonedir, name)
         clone = git.Repo(clonepath)
         return git_version_tags(clone)
 
     def validate_dependencies(
         self,
-        requested_packages,
-        ignore_installed_packages=False,
-        ignore_suggestions=False,
-        use_builtin_packages=True,
-    ):
+        requested_packages: list[tuple[str, str]],
+        ignore_installed_packages: bool = False,
+        ignore_suggestions: bool = False,
+        use_builtin_packages: bool = True,
+    ) -> tuple[str, list[tuple[PackageInfo, str, bool]]]:
         """Validates package dependencies.
 
         Args:
@@ -1997,16 +2054,25 @@ class Manager:
         """
 
         class Node:
-            def __init__(self, name):
+            def __init__(self, name: str):
                 self.name = name
-                self.info = None
-                self.requested_version = None  # (tracking method, version)
-                self.installed_version = None  # (tracking method, version)
-                self.dependers = {}  # name -> version, name needs self at version
-                self.dependees = {}  # name -> version, self needs name at version
+                self.info: PackageInfo | None = None
+
+                # (tracking method, version)
+                self.requested_version: PackageVersion | None = None
+
+                # (tracking method, version)
+                self.installed_version: PackageVersion | None = None
+
+                # name -> version, name needs self at version
+                self.dependers: dict[str, str] = {}
+
+                # name -> version, self needs name at version
+                self.dependees: dict[str, str] = {}
+
                 self.is_suggestion = False
 
-            def __str__(self):
+            def __str__(self) -> str:
                 return (
                     f"{self.name}\n\t"
                     f"requested: {self.requested_version}\n\t"
@@ -2015,8 +2081,8 @@ class Manager:
                     f"suggestion: {self.is_suggestion}"
                 )
 
-        graph = {}  # Node.name -> Node, nodes store edges
-        requests = []  # List of Node, just for requested packages
+        graph: dict[str, Node] = {}  # Node.name -> Node, nodes store edges
+        requests: list[Node] = []  # List of Node, just for requested packages
 
         # 1. Try to make nodes for everything in the dependency graph...
 
@@ -2042,6 +2108,7 @@ class Manager:
 
         while to_process:
             (_, node) = to_process.popitem()
+            assert node.info
             dd = node.info.dependencies(field="depends")
             ds = node.info.dependencies(field="suggests")
 
@@ -2073,28 +2140,28 @@ class Manager:
 
                 # Suggestion status propagates to 'depends' field of suggested packages.
                 is_suggestion = node.is_suggestion or (
-                    dep_name in ds and dep_name not in dd
+                    (ds is not None and dep_name in ds) and dep_name not in dd
                 )
 
                 # If a dependency can be fulfilled by a built-in package
                 # use its PackageInfo directly instead of going through
                 # self.info() to search for it in package sources, where
                 # it may not actually exist.
-                info = None
+                info2 = None
                 if use_builtin_packages:
-                    info = self.find_builtin_package(dep_name)
+                    info2 = self.find_builtin_package(dep_name)
 
-                if info is None:
-                    info = self.info(dep_name, prefer_installed=False)
+                if info2 is None:
+                    info2 = self.info(dep_name, prefer_installed=False)
 
-                if info.invalid_reason:
+                if info2.invalid_reason:
                     return (
-                        f'package "{node.name}" has invalid dependency "{dep_name}": {info.invalid_reason}',
+                        f'package "{node.name}" has invalid dependency "{dep_name}": {info2.invalid_reason}',
                         [],
                     )
 
                 dep_name_orig = dep_name
-                dep_name = info.package.qualified_name()
+                dep_name = info2.package.qualified_name()
                 LOG.debug(
                     'dependency "%s" of "%s" resolved to "%s"',
                     dep_name_orig,
@@ -2115,7 +2182,7 @@ class Manager:
                     continue
 
                 node = Node(dep_name)
-                node.info = info
+                node.info = info2
                 node.is_suggestion = is_suggestion
                 graph[node.name] = node
                 to_process[node.name] = node
@@ -2164,6 +2231,7 @@ class Manager:
             if name == "zkg":
                 continue
 
+            assert node.info
             dd = node.info.dependencies(field="depends")
             ds = node.info.dependencies(field="suggests")
 
@@ -2201,6 +2269,7 @@ class Manager:
                         if dependency_node.name == "zkg":
                             continue
 
+                        assert dependency_node.info
                         if dependency_node.info.package.matches_path(dep_name):
                             dependency_node.dependers[name] = dep_version
                             node.dependees[dependency_node.name] = dep_version
@@ -2215,7 +2284,7 @@ class Manager:
         # The resulting list of packages required to satisfy dependencies,
         # in depender -> dependent (i.e., root -> leaves in dependency tree)
         # order.
-        new_pkgs = []
+        new_pkgs: list[tuple[PackageInfo, str, bool]] = []
 
         while nodes_todo:
             node = nodes_todo.pop(0)
@@ -2225,7 +2294,7 @@ class Manager:
             # Avoid cyclic dependencies: ensure we traverse these edges only
             # once. (The graph may well be a dag, so it's okay to encounter
             # specific nodes repeatedly.)
-            node.dependees = []
+            node.dependees = {}
 
             if not node.dependers:
                 if node.installed_version:
@@ -2239,6 +2308,7 @@ class Manager:
                     continue
 
                 # A new package nothing depends on -- odd?
+                assert node.info
                 new_pkgs.append(
                     (node.info, node.info.best_version(), node.is_suggestion),
                 )
@@ -2273,7 +2343,7 @@ class Manager:
                 need_branch = False
                 need_version = False
 
-                def no_best_version_string(node):
+                def no_best_version_string(node: Node) -> str:
                     rval = f'"{node.name}" has no version satisfying dependencies:\n'
 
                     for depender_name, version_spec in node.dependers.items():
@@ -2307,8 +2377,10 @@ class Manager:
                     if branch_name:
                         best_version = branch_name
                     else:
+                        assert node.info
                         best_version = node.info.default_branch
                 elif need_version:
+                    assert node.info
                     for version in node.info.versions[::-1]:
                         normal_version = normalize_version_tag(version)
                         req_semver = semver.Version.coerce(normal_version)
@@ -2336,15 +2408,18 @@ class Manager:
                         return (no_best_version_string(node), new_pkgs)
                 else:
                     # Must have been all '*' wildcards or no dependers
+                    assert node.info
                     best_version = node.info.best_version()
 
+                assert node.info
+                assert best_version
                 new_pkgs.append((node.info, best_version, node.is_suggestion))
 
         # Remove duplicate new nodes, preserving their latest (i.e. deepest-in-
         # tree) occurrences. Traversing the resulting list right-to-left guarantees
         # that we never visit a node before we've visited all of its dependees.
         seen_nodes = set()
-        res = []
+        res: list[tuple[PackageInfo, str, bool]] = []
 
         for it in reversed(new_pkgs):
             if it[0].package.name in seen_nodes:
@@ -2354,7 +2429,12 @@ class Manager:
 
         return ("", res)
 
-    def bundle(self, bundle_file, package_list, prefer_existing_clones=False):
+    def bundle(
+        self,
+        bundle_file: str,
+        package_list: list[tuple[str, str]],
+        prefer_existing_clones: bool = False,
+    ) -> str:
         """Creates a package bundle.
 
         Args:
@@ -2378,13 +2458,16 @@ class Manager:
         make_dir(bundle_dir)
         manifest_file = os.path.join(bundle_dir, "manifest.txt")
         config = configparser.ConfigParser(delimiters="=")
-        config.optionxform = str
+        config.optionxform = str  # type: ignore
         config.add_section("bundle")
 
         # To be placed into the meta section.
         builtin_packages = []
 
-        def match_package_url_and_version(git_url, version):
+        def match_package_url_and_version(
+            git_url: str,
+            version: str,
+        ) -> InstalledPackage | None:
             for ipkg in self.installed_packages():
                 if ipkg.package.git_url != git_url:
                     continue
@@ -2448,7 +2531,7 @@ class Manager:
         shutil.move(archive, bundle_file)
         return ""
 
-    def unbundle(self, bundle_file):
+    def unbundle(self, bundle_file: str) -> str:
         """Installs all packages contained within a bundle.
 
         Args:
@@ -2470,7 +2553,7 @@ class Manager:
 
         manifest_file = os.path.join(bundle_dir, "manifest.txt")
         config = configparser.ConfigParser(delimiters="=")
-        config.optionxform = str
+        config.optionxform = str  # type: ignore
 
         if not config.read(manifest_file):
             return "invalid bundle: no manifest file"
@@ -2493,10 +2576,8 @@ class Manager:
             shutil.move(os.path.join(bundle_dir, package.name), clonepath)
 
             LOG.debug('unbundle installing "%s"', package.name)
-            error = self._install(package, version, use_existing_clone=True)
-
-            if error:
-                return error
+            if err := self._install(package, version, use_existing_clone=True):
+                return err
 
         # For all the packages that we've just unbundled, verify that their
         # dependencies are fulfilled through installed packages or built-in
@@ -2505,30 +2586,39 @@ class Manager:
         # Possible reasons are built-in packages on the source system missing
         # on the destination system or usage of --nodeps when creating the bundle.
         for git_url, _ in manifest:
-            deps = self.get_installed_package_dependencies(git_url)
-            if deps is None:
+            if deps := self.get_installed_package_dependencies(git_url):
+                for dep, version_spec in deps.items():
+                    ipkg = self.find_installed_package(dep)
+                    if ipkg is None:
+                        LOG.warning(
+                            'dependency "%s" of bundled "%s" missing',
+                            dep,
+                            git_url,
+                        )
+                        continue
+
+                    _, fullfills = ipkg.fullfills(version_spec)
+                    if not fullfills:
+                        LOG.warning(
+                            'dependency "%s" (%s) of "%s" not compatible with "%s"',
+                            dep,
+                            ipkg.status.current_version,
+                            git_url,
+                            version_spec,
+                        )
+
+            else:
                 LOG.warning('package "%s" not installed?', git_url)
                 continue
 
-            for dep, version_spec in deps.items():
-                ipkg = self.find_installed_package(dep)
-                if ipkg is None:
-                    LOG.warning('dependency "%s" of bundled "%s" missing', dep, git_url)
-                    continue
-
-                msg, fullfills = ipkg.fullfills(version_spec)
-                if not fullfills:
-                    LOG.warning(
-                        'dependency "%s" (%s) of "%s" not compatible with "%s"',
-                        dep,
-                        ipkg.status.current_version,
-                        git_url,
-                        version_spec,
-                    )
-
         return ""
 
-    def test(self, pkg_path, version="", test_dependencies=False):
+    def test(
+        self,
+        pkg_path: str,
+        version: str = "",
+        test_dependencies: bool = False,
+    ) -> tuple[str, bool, str]:
         """Test a package.
 
         Args:
@@ -2563,12 +2653,12 @@ class Manager:
         pkg_info = self.info(pkg_path, version=version, prefer_installed=False)
 
         if pkg_info.invalid_reason:
-            return (pkg_info.invalid_reason, "False", "")
+            return (pkg_info.invalid_reason, False, "")
 
         if "test_command" not in pkg_info.metadata:
             return ("Package does not specify a test_command", False, "")
 
-        if not version:
+        if not version and pkg_info.metadata_version:
             version = pkg_info.metadata_version
 
         package = pkg_info.package
@@ -2579,14 +2669,16 @@ class Manager:
         invalid_deps, new_pkgs = self.validate_dependencies(request, False)
 
         if invalid_deps:
+            assert stage.state_dir
             return (invalid_deps, False, stage.state_dir)
 
         env, err = stage.get_subprocess_env()
         if env is None:
             LOG.warning("%s when running tests for %s", err, package.name)
+            assert stage.state_dir
             return (err, False, stage.state_dir)
 
-        pkgs = []
+        pkgs: list[tuple[PackageInfo, str]] = []
         pkgs.append((pkg_info, version))
 
         for info, version, _ in new_pkgs:
@@ -2613,6 +2705,7 @@ class Manager:
                 clone = _clone_package(info.package, clonepath, version)
             except git.GitCommandError as error:
                 LOG.warning("failed to clone git repo: %s", error)
+                assert stage.state_dir
                 return (
                     f"failed to clone {info.package.git_url}",
                     False,
@@ -2623,6 +2716,7 @@ class Manager:
                 git_checkout(clone, version)
             except git.GitCommandError as error:
                 LOG.warning("failed to checkout git repo version: %s", error)
+                assert stage.state_dir
                 return (
                     f"failed to checkout {version} of {info.package.git_url}",
                     False,
@@ -2648,8 +2742,10 @@ class Manager:
                 stage,
             )
             if invalid_reason:
+                assert stage.state_dir
                 return (invalid_reason, False, stage.state_dir)
 
+            assert metadata
             if "test_command" not in metadata:
                 LOG.info(
                     'Skipping unit tests for "%s": no test_command in metadata',
@@ -2686,18 +2782,27 @@ class Manager:
             rc = cmd.wait()
 
             if rc != 0:
+                assert stage.state_dir
                 return (
                     f"test_command failed with exit code {rc}",
                     False,
                     stage.state_dir,
                 )
 
+        assert stage.state_dir
         return ("", True, stage.state_dir)
 
-    def _get_executables(self, metadata):
+    def _get_executables(self, metadata: dict[str, str]) -> list[str]:
         return metadata.get("executables", "").split()
 
-    def _stage(self, package, version, clone, stage, env=None):
+    def _stage(
+        self,
+        package: Package,
+        version: str,
+        clone: git.Repo,
+        stage: Stage,
+        env: dict[str, str] | None = None,
+    ) -> str:
         """Stage a package.
 
         Staging is the act of getting a package ready for use at a particular
@@ -2730,18 +2835,25 @@ class Manager:
 
         """
         LOG.debug('staging "%s": version %s', package, version)
-        metadata_file = _pick_metadata_file(clone.working_dir)
+        metadata_file = _pick_metadata_file(str(clone.working_dir))
         metadata_parser = configparser.ConfigParser(interpolation=None)
-        invalid_reason = _parse_package_metadata(metadata_parser, metadata_file)
+        invalid_reason: str | None = _parse_package_metadata(
+            metadata_parser,
+            metadata_file,
+        )
         if invalid_reason:
             return invalid_reason
 
         metadata = _get_package_metadata(metadata_parser)
-        metadata, invalid_reason = self._interpolate_package_metadata(metadata, stage)
+        interpolated_metadata, invalid_reason = self._interpolate_package_metadata(
+            metadata,
+            stage,
+        )
         if invalid_reason:
             return invalid_reason
 
-        build_command = metadata.get("build_command", "")
+        assert interpolated_metadata
+        build_command = interpolated_metadata.get("build_command", "")
         if build_command:
             LOG.debug(
                 'building "%s": running build_command: %s',
@@ -2759,9 +2871,8 @@ class Manager:
                 stderr=subprocess.PIPE,
             )
 
+            buildlog = self.package_build_log(str(clone.working_dir))
             try:
-                buildlog = self.package_build_log(clone.working_dir)
-
                 with open(buildlog, "wb") as f:
                     LOG.info(
                         'installing "%s": writing build log: %s',
@@ -2772,6 +2883,7 @@ class Manager:
                     f.write("=== STDERR ===\n".encode(std_encoding(sys.stderr)))
 
                     while True:
+                        assert build.stderr
                         data = build.stderr.read(bufsize)
 
                         if data:
@@ -2782,6 +2894,7 @@ class Manager:
                     f.write("=== STDOUT ===\n".encode(std_encoding(sys.stdout)))
 
                     while True:
+                        assert build.stdout
                         data = build.stdout.read(bufsize)
 
                         if data:
@@ -2803,7 +2916,7 @@ class Manager:
             if returncode != 0:
                 return f"package build_command failed, see log in {buildlog}"
 
-        pkg_script_dir = metadata.get("script_dir", "")
+        pkg_script_dir = interpolated_metadata.get("script_dir", "")
         script_dir_src = os.path.join(clone.working_dir, pkg_script_dir)
         script_dir_dst = os.path.join(stage.script_dir, package.name)
 
@@ -2813,14 +2926,14 @@ class Manager:
         pkgload = os.path.join(script_dir_src, "__load__.zeek")
 
         if os.path.isfile(pkgload):
+            symlink_path = os.path.join(
+                os.path.dirname(stage.script_dir),
+                package.name,
+            )
             try:
-                symlink_path = os.path.join(
-                    os.path.dirname(stage.script_dir),
-                    package.name,
-                )
                 make_symlink(os.path.join("packages", package.name), symlink_path)
 
-                for alias in aliases(metadata):
+                for alias in aliases(interpolated_metadata):
                     symlink_path = os.path.join(
                         os.path.dirname(stage.script_dir),
                         alias,
@@ -2828,22 +2941,20 @@ class Manager:
                     make_symlink(os.path.join("packages", package.name), symlink_path)
 
             except OSError as exception:
-                error = f"could not create symlink at {symlink_path}"
-                error += f": {type(exception).__name__}: {exception}"
-                return error
+                err = f"could not create symlink at {symlink_path}"
+                err += f": {type(exception).__name__}: {exception}"
+                return err
 
-            error = _copy_package_dir(
+            if err := _copy_package_dir(
                 package,
                 "script_dir",
                 script_dir_src,
                 script_dir_dst,
                 self.scratch_dir,
-            )
-
-            if error:
-                return error
+            ):
+                return err
         else:
-            if "script_dir" in metadata:
+            if "script_dir" in interpolated_metadata:
                 return f"no __load__.zeek file found in package's 'script_dir' : {pkg_script_dir}"
 
             LOG.warning(
@@ -2852,7 +2963,7 @@ class Manager:
                 package,
             )
 
-        pkg_plugin_dir = metadata.get("plugin_dir", "build")
+        pkg_plugin_dir = interpolated_metadata.get("plugin_dir", "build")
         plugin_dir_src = os.path.join(clone.working_dir, pkg_plugin_dir)
         plugin_dir_dst = os.path.join(stage.plugin_dir, package.name)
 
@@ -2868,19 +2979,17 @@ class Manager:
                 # plugins, so don't error out in that case, just log it.
                 return f"package's 'plugin_dir' does not exist: {pkg_plugin_dir}"
 
-        error = _copy_package_dir(
+        if err := _copy_package_dir(
             package,
             "plugin_dir",
             plugin_dir_src,
             plugin_dir_dst,
             self.scratch_dir,
-        )
-
-        if error:
-            return error
+        ):
+            return err
 
         # Ensure any listed executables exist as advertised.
-        for p in self._get_executables(metadata):
+        for p in self._get_executables(interpolated_metadata):
             full_path = os.path.join(clone.working_dir, p)
             if not os.path.isfile(full_path):
                 return f"executable '{p}' is missing"
@@ -2897,7 +3006,7 @@ class Manager:
 
         return ""
 
-    def install(self, pkg_path, version=""):
+    def install(self, pkg_path: str, version: str = "") -> str:
         """Install a package.
 
         Args:
@@ -2972,7 +3081,11 @@ class Manager:
             LOG.warning('installing "%s": source package git repo is invalid', pkg_path)
             return f'failed to clone package "{pkg_path}": {error}'
 
-    def _validate_alias_conflict(self, pkg, metadata_dict):
+    def _validate_alias_conflict(
+        self,
+        pkg: Package,
+        metadata_dict: dict[str, str],
+    ) -> str:
         """Check if there's an alias conflict.
 
         If any of the installed packages aliases collide with the package's
@@ -3020,7 +3133,12 @@ class Manager:
 
         return ""
 
-    def _install(self, package, version, use_existing_clone=False):
+    def _install(
+        self,
+        package: Package,
+        version: str,
+        use_existing_clone: bool = False,
+    ) -> str:
         """Install a :class:`.package.Package`.
 
         Returns:
@@ -3063,20 +3181,19 @@ class Manager:
                     )
                     return f'no such branch or version tag: "{version}"'
 
+        elif len(version_tags):
+            version = version_tags[-1]
+            status.tracking_method = TRACKING_METHOD_VERSION
         else:
-            if len(version_tags):
-                version = version_tags[-1]
-                status.tracking_method = TRACKING_METHOD_VERSION
-            else:
-                version = git_default_branch(clone)
-                status.tracking_method = TRACKING_METHOD_BRANCH
+            version = git_default_branch(clone)
+            status.tracking_method = TRACKING_METHOD_BRANCH
 
         status.current_version = version
         git_checkout(clone, version)
         status.current_hash = clone.head.object.hexsha
         status.is_outdated = _is_clone_outdated(clone, version, status.tracking_method)
 
-        metadata_file = _pick_metadata_file(clone.working_dir)
+        metadata_file = _pick_metadata_file(str(clone.working_dir))
         metadata_parser = configparser.ConfigParser(interpolation=None)
         invalid_reason = _parse_package_metadata(metadata_parser, metadata_file)
 
@@ -3114,7 +3231,11 @@ class Manager:
         LOG.debug('installed "%s"', package)
         return ""
 
-    def _interpolate_package_metadata(self, metadata, stage):
+    def _interpolate_package_metadata(
+        self,
+        metadata: dict[str, str],
+        stage: Stage,
+    ) -> tuple[dict[str, str] | None, str | None]:
         # This is a bit circular: we need to parse the user variables, if any,
         # from the metadata before we can substitute them into other package
         # metadata.
@@ -3137,7 +3258,9 @@ class Manager:
                 substitutions[uvar.name()] = val_from_env
 
             if uvar.name() not in substitutions:
-                substitutions[uvar.name()] = uvar.val()
+                val = uvar.val()
+                assert val
+                substitutions[uvar.name()] = val
 
         # Now apply the substitutions via a new config parser:
         metadata_parser = configparser.ConfigParser(defaults=substitutions)
@@ -3147,7 +3270,7 @@ class Manager:
 
     # Ensure we have links in bin_dir for all executables coming with any of
     # the currently installed packages.
-    def _refresh_bin_dir(self, bin_dir, prev_bin_dir=None):
+    def _refresh_bin_dir(self, bin_dir: str) -> None:
         for ipkg in self.installed_pkgs.values():
             for exe in self._get_executables(ipkg.package.metadata):
                 # Put symlinks in place that are missing in current directory
@@ -3166,7 +3289,7 @@ class Manager:
 
     # Remove all links in bin_dir that are associated with executables
     # coming with any of the currently installed package.
-    def _clear_bin_dir(self, bin_dir):
+    def _clear_bin_dir(self, bin_dir: str) -> None:
         for ipkg in self.installed_pkgs.values():
             for exe in self._get_executables(ipkg.package.metadata):
                 old = os.path.join(bin_dir, os.path.basename(exe))
@@ -3175,10 +3298,10 @@ class Manager:
                         os.unlink(old)
                         LOG.debug("removed link %s", old)
                     except Exception:
-                        LOG.warn("failed to remove link %s", old)
+                        LOG.warning("failed to remove link %s", old)
 
 
-def _get_branch_names(clone):
+def _get_branch_names(clone: git.Repo) -> list[str]:
     rval = []
 
     for ref in clone.references:
@@ -3192,19 +3315,19 @@ def _get_branch_names(clone):
     return rval
 
 
-def _is_version_outdated(clone, version):
+def _is_version_outdated(clone: git.Repo, version: str) -> bool:
     version_tags = git_version_tags(clone)
     latest = normalize_version_tag(version_tags[-1])
     return normalize_version_tag(version) != latest
 
 
-def _is_branch_outdated(clone, branch):
+def _is_branch_outdated(clone: git.Repo, branch: str) -> bool:
     it = clone.iter_commits(f"{branch}..origin/{branch}")
-    num_commits_behind = sum(1 for c in it)
+    num_commits_behind = sum(1 for _ in it)
     return num_commits_behind > 0
 
 
-def _is_clone_outdated(clone, ref_name, tracking_method):
+def _is_clone_outdated(clone: git.Repo, ref_name: str, tracking_method: str) -> bool:
     if tracking_method == TRACKING_METHOD_VERSION:
         return _is_version_outdated(clone, ref_name)
 
@@ -3217,7 +3340,7 @@ def _is_clone_outdated(clone, ref_name, tracking_method):
     raise NotImplementedError
 
 
-def _is_commit_hash(clone, text):
+def _is_commit_hash(clone: git.Repo, text: str) -> bool:
     try:
         commit = clone.commit(text)
         return commit.hexsha.startswith(text)
@@ -3225,7 +3348,13 @@ def _is_commit_hash(clone, text):
         return False
 
 
-def _copy_package_dir(package, dirname, src, dst, scratch_dir):
+def _copy_package_dir(
+    package: Package,
+    dirname: str,
+    src: str,
+    dst: str,
+    scratch_dir: str,
+) -> str:
     """Copy a directory from a package to its installation location.
 
     Returns:
@@ -3263,7 +3392,7 @@ def _copy_package_dir(package, dirname, src, dst, scratch_dir):
     if not os.path.isdir(src):
         return f"failed to copy package {dirname}: not a dir or tarfile"
 
-    def ignore(_, files):
+    def ignore(_: str, files: list[str]) -> list[str]:
         rval = []
 
         for f in files:
@@ -3289,7 +3418,7 @@ def _copy_package_dir(package, dirname, src, dst, scratch_dir):
     return ""
 
 
-def _create_readme(file_path):
+def _create_readme(file_path: str) -> None:
     if os.path.exists(file_path):
         return
 
@@ -3298,7 +3427,12 @@ def _create_readme(file_path):
         f.write("Don't make direct modifications to anything within it.\n")
 
 
-def _clone_package(package, clonepath, version, recursive=True):
+def _clone_package(
+    package: Package,
+    clonepath: str,
+    version: str | None,
+    recursive: bool = True,
+) -> git.Repo:
     """Clone a :class:`.package.Package` git repo.
 
     Returns:
@@ -3308,15 +3442,15 @@ def _clone_package(package, clonepath, version, recursive=True):
         git.GitCommandError: if the git repo is invalid
     """
     delete_path(clonepath)
-    shallow = not is_sha1(version)
+    shallow = True if version is None else is_sha1(version)
     return git_clone(package.git_url, clonepath, shallow=shallow, recursive=recursive)
 
 
-def _get_package_metadata(parser):
+def _get_package_metadata(parser: configparser.ConfigParser) -> dict[str, str]:
     return {item[0]: item[1] for item in parser.items("package")}
 
 
-def _pick_metadata_file(directory):
+def _pick_metadata_file(directory: str) -> str:
     rval = os.path.join(directory, METADATA_FILENAME)
 
     if os.path.exists(rval):
@@ -3325,7 +3459,10 @@ def _pick_metadata_file(directory):
     return os.path.join(directory, LEGACY_METADATA_FILENAME)
 
 
-def _parse_package_metadata(parser, metadata_file):
+def _parse_package_metadata(
+    parser: configparser.ConfigParser,
+    metadata_file: str,
+) -> str:
     """Return string explaining why metadata is invalid, or '' if valid."""
     if not parser.read(metadata_file):
         LOG.warning("%s: missing metadata file", metadata_file)
@@ -3344,10 +3481,15 @@ def _parse_package_metadata(parser, metadata_file):
     return ""
 
 
-_legacy_metadata_warnings = set()
+_legacy_metadata_warnings: set[str] = set()
 
 
-def _info_from_clone(clone, package, status, version):
+def _info_from_clone(
+    clone: git.Repo,
+    package: Package,
+    status: PackageStatus | None,
+    version: str | None,
+) -> PackageInfo:
     """Retrieves information about a package.
 
     Returns:
@@ -3356,14 +3498,14 @@ def _info_from_clone(clone, package, status, version):
     versions = git_version_tags(clone)
     default_branch = git_default_branch(clone)
 
-    if _is_commit_hash(clone, version):
+    if version and _is_commit_hash(clone, version):
         version_type = TRACKING_METHOD_COMMIT
     elif version in versions:
         version_type = TRACKING_METHOD_VERSION
     else:
         version_type = TRACKING_METHOD_BRANCH
 
-    metadata_file = _pick_metadata_file(clone.working_dir)
+    metadata_file = _pick_metadata_file(str(clone.working_dir))
     metadata_parser = configparser.ConfigParser(interpolation=None)
     invalid_reason = _parse_package_metadata(metadata_parser, metadata_file)
 
@@ -3407,5 +3549,5 @@ def _info_from_clone(clone, package, status, version):
     )
 
 
-def _is_reserved_pkg_name(name):
-    return name == "zeek" or name == "zkg"
+def _is_reserved_pkg_name(name: str) -> bool:
+    return name in {"zeek", "zkg"}
