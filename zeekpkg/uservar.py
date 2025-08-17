@@ -137,8 +137,7 @@ class UserVar:
 
         desc = " (" + self._desc + ")" if self._desc else ""
         print(f'"{name}" requires a "{self._name}" value{desc}: ')
-        assert val
-        self._val = _rlinput(self._name + ": ", val)
+        self._val = _rlinput(self._name + ": ", val if val else "")
 
         return self._val
 
