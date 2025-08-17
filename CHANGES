@@ -1,3 +1,11 @@
+3.1.0-10 | 2025-08-17 21:32:00 +0200
+
+  * Bump pre-commit hooks (Benjamin Bannier, Corelight)
+
+  * Fix typing of use of `readline.set_startup_hook` (Benjamin Bannier, Corelight)
+
+    This got broken in 3719456879c66026cc94f4c792af9dde9ed13a41.
+
 3.1.0-7 | 2025-08-11 17:05:51 +0200
 
   * Change `is_sha` to always expect a value (Benjamin Bannier, Corelight)
